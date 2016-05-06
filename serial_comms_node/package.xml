@@ -1,0 +1,16 @@
+<package>
+  <name>serial_comms_node</name>
+  <version>0.0.0</version>
+  <description>
+    Simple node that reads/writes strings from/to a serial port.
+  </description>
+  <author>Nicholi Shiell</author>
+  <maintainer email="nicholishiell@gmail.com">Nicholi Shiell</maintainer>
+  <license>BSD</license>
+  <url></url>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <run_depend>rospy</run_depend>
+  <run_depend>python-serial</run_depend>
+</package>
