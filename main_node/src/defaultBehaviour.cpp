@@ -25,7 +25,7 @@ int puckXRCoor = 0;
 string beaconPriorities [3] = {"0","1","2"};
 
 std::vector<colour_detector::ColourDetection> detectedColours;
-
+std::vector<pixy_node::PixyBlock> pixyBlocks;
 void publishMotorSpeed(string wheelSpeed) {
 
 	std_msgs::String msg;	
@@ -237,7 +237,7 @@ void reactToBeacon(){
 }*/
 // this method is called multiple times per spin
 // setting states and operating on them in another method to take advantage of that
-void begin() {
+void beginOld() {
 	//stop();
 	/*
 	 * colourDetection.distance = sqrt(pow((imgCenterX - colourDetection.x), 2)+pow((imgCenterY - colourDetection.y), 2));
@@ -304,7 +304,10 @@ std:cout << detectionsArray[i].colour << std::endl;
 }*/
 
 void pixyCb(const pixy_node::PixyData::ConstPtr& msg){
-	std::vector<pixy_node::PixyBlock> pixyBlocks = msg -> blocks;
+	pixyBlocks = msg -> blocks;
+
+}
+void begin(){
 	if(pixyBlocks.size()>0){
 		printf("found block\n");
 		if(pixyBlocks[0].roi.x_offset < 130){
@@ -331,6 +334,12 @@ int main(int argc, char **argv) {
 	//ros::Subscriber imageSubscriber = n.subscribe("coloursDetected", 10, coloursCb);
 	ros::Subscriber pixySubscriber = n.subscribe("block_data", 10, pixyCb);
 	motorPublisher = n.advertise<std_msgs::String>("wheelSpeeds", 1);
-	ros::spin();
+	ros::Rate r(10);
+	while(ros::ok()){
+		begin();
+		ros::spinOnce();
+		r.sleep();
+	}
+	
 	return(0);
 }
