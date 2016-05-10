@@ -5,7 +5,10 @@
 #include <std_msgs/String.h>
 #include <colour_detector/ColourDetection.h>
 #include <colour_detector/ColourDetectionArray.h>
-
+#include <tf/transform_broadcaster.h>
+#include <pixy_node/PixyData.h>
+#include <pixy_node/PixyBlock.h>
+#include <pixy_node/Servo.h>
 using namespace std;
 
 ros::Publisher motorPublisher;
@@ -140,18 +143,22 @@ bool destinationIsLeft(int destX) { //update values
 }*/
 void moveForwards() {
 	publishMotorSpeed("S");
+	ros::Duration(2.0).sleep();
 }
 void turnRight() {
 	publishMotorSpeed("R");
+	ros::Duration(2.0).sleep();
 }
 
 void turnLeft() {
 	publishMotorSpeed("L");
+	ros::Duration(2.0).sleep();
 
 }
 
 void stop() {
 	publishMotorSpeed("S");
+	ros::Duration(2.0).sleep();
 }
 
 /*void moveTo(int destX, int destY) {
@@ -285,21 +292,44 @@ void begin() {
 
 }
 
-void coloursCb(const colour_detector::ColourDetectionArray::ConstPtr& msg){
+/*void coloursCb(const colour_detector::ColourDetectionArray::ConstPtr& msg){
 	
 		/*for(std::vector<colour_detector::ColourDetectionArray>::const_iterator it = msg->detections.begin(); it != msg->detections.end(); it++){
 		std::cout << "vector" << std::endl;
-}*/
+}*//*
 std::vector<colour_detector::ColourDetection> detectionsArray = msg -> detections;
 for (int i=0; i<detectionsArray.size(); i++){
 std:cout << detectionsArray[i].colour << std::endl;
 }
+}*/
+
+void pixyCb(const pixy_node::PixyData::ConstPtr& msg){
+	std::vector<pixy_node::PixyBlock> pixyBlocks = msg -> blocks;
+	if(pixyBlocks.size()>0){
+		printf("found block\n");
+		if(pixyBlocks[0].roi.x_offset < 130){
+			printf("turning left\n");
+			turnLeft();
+		}else{
+			if(pixyBlocks[0].roi.x_offset > 190){
+				printf("turning right\n");
+				turnRight();
+			}else{
+				printf("moving forwards\n");
+				moveForwards();
+			}
+		}
+	}else{
+		printf("nth found. Stopping\n");
+		stop();
+	}
 }
 
 int main(int argc, char **argv) {
 	ros::init(argc, argv, "main_node");
 	ros::NodeHandle n;
-	ros::Subscriber imageSubscriber = n.subscribe("coloursDetected", 10, coloursCb);
+	//ros::Subscriber imageSubscriber = n.subscribe("coloursDetected", 10, coloursCb);
+	ros::Subscriber pixySubscriber = n.subscribe("block_data", 10, pixyCb);
 	motorPublisher = n.advertise<std_msgs::String>("wheelSpeeds", 1);
 	ros::spin();
 	return(0);
