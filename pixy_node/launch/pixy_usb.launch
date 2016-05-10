@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<launch>
+	<node name="pixy_node" pkg="pixy_node" type="pixy_node" ns="my_pixy" output="screen" launch-prefix="sudo">
+		<param name="use_servos" value="false" />
+		<param name="rate" value="50.0" />
+	</node>
+</launch>
