@@ -54,7 +54,7 @@ class serial_comms_node(object):
 		self.SerialDataGateway.Write(message)
 
 		
-	def __init__(self, port="/dev/ttyAMA0", baudrate=56700):
+	def __init__(self, port="/dev/serial0", baudrate=56700):
 		'''
 		Initializes the receiver class. 
 		port: The serial port to listen to.
@@ -63,7 +63,7 @@ class serial_comms_node(object):
 
 		rospy.init_node('serial_comms_node')
 
-		port = rospy.get_param("~port", "/dev/ttyAMA0")
+		port = rospy.get_param("~port", "/dev/serial0")
 		baudRate = int(rospy.get_param("~baudRate", 57600))
 
 		rospy.loginfo("Starting with serial port: " + port + ", baud rate: " + str(baudRate))

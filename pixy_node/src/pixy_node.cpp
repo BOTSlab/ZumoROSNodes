@@ -66,7 +66,7 @@ PixyNode::PixyNode() :
 			std::string("pixy_frame"));
 
 	double rate;
-	private_node_handle_.param("rate", rate, 50.0);
+	private_node_handle_.param("rate", rate, 10.0);
 	rate_=ros::Rate(rate);
 
     private_node_handle_.param("use_servos", use_servos_, false);

@@ -2,9 +2,12 @@
 #include <iostream>
 #include <stdlib.h>
 #include <sstream>
+#include <string>
 #include <std_msgs/String.h>
 #include <colour_detector/ColourDetection.h>
 #include <colour_detector/ColourDetectionArray.h>
+#include <apriltags_ros/AprilTagDetection.h>
+#include <apriltags_ros/AprilTagDetectionArray.h>
 #include <tf/transform_broadcaster.h>
 #include <pixy_node/PixyData.h>
 #include <pixy_node/PixyBlock.h>
@@ -18,14 +21,16 @@ int state = 0;
 int subState = 0;
 
 int factor = 2;
-bool hasPuck = false;
+int proximityReading = 12;
 int puckYCoor = 0;//////////////////////////
 int puckXLCoor = 0;
 int puckXRCoor = 0;
 string beaconPriorities [3] = {"0","1","2"};
-
+bool turnedLeft = false;
+bool turnedRight = false;
 std::vector<colour_detector::ColourDetection> detectedColours;
-
+std::vector<pixy_node::PixyBlock> pixyBlocks;
+std::vector<apriltags_ros::AprilTagDetection> detectedTags;
 void publishMotorSpeed(string wheelSpeed) {
 
 	std_msgs::String msg;	
@@ -130,35 +135,20 @@ bool destinationIsLeft(int destX) { //update values
 	}
 	return false;
 }
-/*bool hasAPuck(){
-	for(int i=0; i<detectedColours.size(); i++){
-		if(detectedColours[i].colour == "red"){
-			if(detectedColours[i].y > puckYCoor && detectedColours[i].x < puckXLCoor && detectedColours[i].x > puckXRCoor){
-			return true;
-		}		
-		}
-
-	}
-	return false;
-}*/
 void moveForwards() {
-	publishMotorSpeed("S");
-	ros::Duration(2.0).sleep();
+	publishMotorSpeed("F");
 }
 void turnRight() {
 	publishMotorSpeed("R");
-	ros::Duration(2.0).sleep();
 }
 
 void turnLeft() {
 	publishMotorSpeed("L");
-	ros::Duration(2.0).sleep();
 
 }
 
 void stop() {
 	publishMotorSpeed("S");
-	ros::Duration(2.0).sleep();
 }
 
 /*void moveTo(int destX, int destY) {
@@ -198,33 +188,11 @@ void stop() {
 	hasAPuck();
 
 }
-void wander(){
-	int randomNumber = rand() % 3;
-	if(randomNumber == 0){
-		turnLeft();
-		ros::Duration(2.0).sleep();
-	}else{
-		if(randomNumber == 1){
-			turnRight();
-			ros::Duration(2.0).sleep();
-		}else{
-			moveForwards();
-			ros::Duration(2.0).sleep();
-		}
-	}
 
-}
 bool canSeeBeacon(){
 	return false;
 }
-void pickUpPuck(){
 
-	int min = 1000;
-	for(int i=0; i<detectedRedColours.size(); i++){
-		//if(distance)
-	}
-	//moveTo(detectedRedColours[0].x, detectedRedColours[0].y);
-}
 
 void depositPuck(){
 
@@ -235,9 +203,56 @@ void abandonPuck(){
 void reactToBeacon(){
 
 }*/
+bool hasPuck(){
+	if(proximityReading == 12){
+		return false;
+	}
+	return true;
+}
+void wander(){
+	int randomNumber = rand() % 3;
+	if(randomNumber == 0){
+		std::cout << "turning left\n" << std::endl;
+		turnLeft();
+		ros::Duration(2.0).sleep();
+	}else{
+		if(randomNumber == 1){
+			std::cout << "turning right\n" << std::endl;
+			turnRight();
+			ros::Duration(2.0).sleep();
+		}else{
+			std::cout << "moving forwards\n" << std::endl;
+			moveForwards();
+			ros::Duration(2.0).sleep();
+		}
+	}
+
+}
+void pickUpPuck(){
+// TODO: add signature to differentiate pucks from others
+	if(pixyBlocks.size()>0){
+		for (int i=0; i<pixyBlocks.size(); i++){
+			std::cout << pixyBlocks[i].roi.x_offset << "\n" <<std::endl;
+			if(pixyBlocks[i].roi.x_offset < 110){
+				std::cout << "turning left\n" << std::endl;
+				turnLeft();
+			}else{
+				if(pixyBlocks[i].roi.x_offset > 190){
+					std::cout << "turning right\n" << std::endl;
+					turnRight();
+				}else{
+					std::cout << "moving forwards\n" << std::endl;
+					moveForwards();
+				}
+			}
+		}
+	}else{
+		stop();
+	}
+}
 // this method is called multiple times per spin
 // setting states and operating on them in another method to take advantage of that
-void begin() {
+void beginOld() {
 	//stop();
 	/*
 	 * colourDetection.distance = sqrt(pow((imgCenterX - colourDetection.x), 2)+pow((imgCenterY - colourDetection.y), 2));
@@ -292,45 +307,49 @@ void begin() {
 
 }
 
-/*void coloursCb(const colour_detector::ColourDetectionArray::ConstPtr& msg){
-	
-		/*for(std::vector<colour_detector::ColourDetectionArray>::const_iterator it = msg->detections.begin(); it != msg->detections.end(); it++){
-		std::cout << "vector" << std::endl;
-}*//*
-std::vector<colour_detector::ColourDetection> detectionsArray = msg -> detections;
-for (int i=0; i<detectionsArray.size(); i++){
-std:cout << detectionsArray[i].colour << std::endl;
+void coloursCb(const colour_detector::ColourDetectionArray::ConstPtr& msg){
+
+	detectedColours = msg -> detections;
+
 }
-}*/
 
 void pixyCb(const pixy_node::PixyData::ConstPtr& msg){
-	std::vector<pixy_node::PixyBlock> pixyBlocks = msg -> blocks;
-	if(pixyBlocks.size()>0){
-		printf("found block\n");
-		if(pixyBlocks[0].roi.x_offset < 130){
-			printf("turning left\n");
-			turnLeft();
-		}else{
-			if(pixyBlocks[0].roi.x_offset > 190){
-				printf("turning right\n");
-				turnRight();
-			}else{
-				printf("moving forwards\n");
-				moveForwards();
-			}
-		}
+	pixyBlocks = msg -> blocks;
+}
+
+void aprilTagsCb(const apriltags_ros::AprilTagDetectionArray::ConstPtr& msg){
+	detectedTags = msg -> detections;
+}
+
+void sensorsCb(const std_msgs::String::ConstPtr& msg){
+	if(msg -> data == ""){
+		proximityReading = 12;
 	}else{
-		printf("nth found. Stopping\n");
-		stop();
+		std::stringstream reading(msg -> data);
+		reading >> proximityReading;
 	}
+
+}
+void begin(){
+	std::cout << hasPuck() << std::endl;
+	//wander();
+	//pickUpPuck();
 }
 
 int main(int argc, char **argv) {
 	ros::init(argc, argv, "main_node");
 	ros::NodeHandle n;
-	//ros::Subscriber imageSubscriber = n.subscribe("coloursDetected", 10, coloursCb);
-	ros::Subscriber pixySubscriber = n.subscribe("block_data", 10, pixyCb);
+	ros::Subscriber coloursSubscriber = n.subscribe("coloursDetected", 1, coloursCb);
+	ros::Subscriber pixySubscriber = n.subscribe("block_data", 1, pixyCb);
+	ros::Subscriber aprilTagsSubscriber = n.subscribe("aprilTags", 1, aprilTagsCb);
+	ros::Subscriber proximitySensorsSubscriber = n.subscribe("Sensors", 1, sensorsCb);
 	motorPublisher = n.advertise<std_msgs::String>("wheelSpeeds", 1);
-	ros::spin();
+	ros::Rate r(10);
+	while(ros::ok()){
+		begin();
+		ros::spinOnce();
+		r.sleep();
+	}
+	
 	return(0);
 }

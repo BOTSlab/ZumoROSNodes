@@ -93,8 +93,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define PI 3.14159265
 ros::Publisher detections_pub;
 image_transport::Publisher imPublisher;
-float imgCenterX = 320.0; //to_update
-float imgCenterY = 240.0; //to_update
+float imgCenterX = 520.0; //to_update
+float imgCenterY = 464.0; //to_update
+colour_detector::ColourDetectionArray colourDetectionArray;
 using namespace cv;
 using namespace std;
 
@@ -180,32 +181,16 @@ static void get_status(RASPIVID_STATE *state)
 
    // Default everything to zero
    memset(state, 0, sizeof(RASPIVID_STATE));
-
-   if (ros::param::get("~width", temp )){
-	if(temp > 0 && temp <= 1920)	
-		state->width = temp;
-	else	state->width = 640;
-   }else{
-	state->width = 640;
-	ros::param::set("~width", 640);
-   }
-
-   if (ros::param::get("~height", temp )){
-	if(temp > 0 && temp <= 1080)	
-		state->height = temp;
-	else	state->height = 480;
-   }else{
-	state->height = 480;
-	ros::param::set("~height", 480);
-   }
-
+	state->width = 1080;
+	state->height = 720;
+   
    if (ros::param::get("~quality", temp )){
 	if(temp > 0 && temp <= 100)
 		state->quality = temp;
-	else	state->quality = 80;
+	else	state->quality = 100;
    }else{
-	state->quality = 80;
-	ros::param::set("~quality", 80);
+	state->quality = 100;
+	ros::param::set("~quality", 100);
    }
 
    if (ros::param::get("~framerate", temp )){
@@ -273,6 +258,7 @@ colour_detector::ColourDetectionArray getDetectedColours(const cv_bridge::CvImag
 		colourDetection.bearing = atan2((colourDetection.y - imgCenterY), (colourDetection.x - imgCenterX)) * 180 / PI ;
 		colourDetectionArray.detections.push_back(colourDetection);
 	}
+	//ros::Duration(0.5).sleep();
 	return colourDetectionArray;
 }
 
@@ -327,7 +313,7 @@ static void camera_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buff
 
 
 		//IplImage *img = cv_bridge:imgMsgToCv(msg, "passthrough");
-		cv_bridge::CvImageConstPtr cvSegmentationImage = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::BGR8);
+		const cv_bridge::CvImageConstPtr cvSegmentationImage = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::BGR8);
 		/*Mat HSV;
 		cvtColor(cv_ptr->image, HSV, COLOR_BGR2HSV);
 		Mat rightCol;
@@ -335,23 +321,26 @@ static void camera_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buff
 		cout << "hello" << HSV.rows << endl;
 		sensor_msgs::ImagePtr msg2 = cv_bridge::CvImage(std_msgs::Header(), "bgr8", rightCol).toImageMsg();
 		imPublisher.publish(msg2);*/
-		colour_detector::ColourDetectionArray colourDetectionArray;
-		colourDetectionArray = getDetectedColours(cvSegmentationImage, Scalar(100,50,50), Scalar(130,255,255), "blue");
+
+		colourDetectionArray = getDetectedColours(cvSegmentationImage, Scalar(88,0,0), Scalar(94 ,255,255), "blue");
+
+		colour_detector::ColourDetectionArray orangeDetectionArray = getDetectedColours(cvSegmentationImage, Scalar(8, 0, 0), Scalar(13, 255, 255), "orange"); //momken l 16
 	
 		//colour_detector::ColourDetectionArray redDetectionArray = getDetectedColours(cvSegmentationImage, Scalar(0, 50, 50), Scalar(0, 255, 255), "red");
 
-		colour_detector::ColourDetectionArray greenDetectionArray = getDetectedColours(cvSegmentationImage, Scalar(50, 50, 50), Scalar(65, 255, 255), "green");
+		//colour_detector::ColourDetectionArray greenDetectionArray = getDetectedColours(cvSegmentationImage, Scalar(47, 50, 50), Scalar(60, 255, 255), "green");
 	
-		colourDetectionArray.detections.insert(colourDetectionArray.detections.end(), greenDetectionArray.detections.begin(), greenDetectionArray.detections.end());
+		colourDetectionArray.detections.insert(colourDetectionArray.detections.end(), orangeDetectionArray.detections.begin(), orangeDetectionArray.detections.end());
+		//colourDetectionArray.detections.insert(colourDetectionArray.detections.end(), greenDetectionArray.detections.begin(), greenDetectionArray.detections.end());
 
-		detections_pub.publish(colourDetectionArray);
+
 		//detections_pub.publish(redDetectionArray);
 
-		image_pub.publish(msg);
+		//image_pub.publish(msg);
 		c_info.header.seq = pData->frame;
 		c_info.header.stamp = msg.header.stamp;
 		c_info.header.frame_id = msg.header.frame_id;
-		camera_info_pub.publish(c_info);
+		//camera_info_pub.publish(c_info);
 		pData->frame++;
 		pData->id = 0;		
 	}
@@ -895,7 +884,9 @@ bool serv_stop_cap(	std_srvs::Empty::Request  &req,
 }
 
 
-
+void begin(){
+	detections_pub.publish(colourDetectionArray);
+}
 int main(int argc, char **argv){
    ros::init(argc, argv, "raspicam_raw_node");
    ros::NodeHandle n;
@@ -914,10 +905,16 @@ int main(int argc, char **argv){
    image_transport::ImageTransport it(n);
    imPublisher = it.advertise("testingCamera", 1);// remove_this
    detections_pub = n.advertise<colour_detector::ColourDetectionArray>("coloursDetected", 1);
-   camera_info_pub = n.advertise<sensor_msgs::CameraInfo>("camera/camera_info", 1);
+   //camera_info_pub = n.advertise<sensor_msgs::CameraInfo>("camera/camera_info", 1);
    ros::ServiceServer start_cam = n.advertiseService("camera/start_capture", serv_start_cap);
    ros::ServiceServer stop_cam = n.advertiseService("camera/stop_capture", serv_stop_cap);
-   ros::spin();
+	ros::Rate r(10);
+	while(ros::ok()){
+		begin();
+		ros::spinOnce();
+		r.sleep();
+	}
+  // ros::spin();
    close_cam(&state_srv);
    return 0;
 }

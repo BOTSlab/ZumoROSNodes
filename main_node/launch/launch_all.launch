@@ -3,4 +3,10 @@
   </node>
   <node pkg="apriltags_ros" type="apriltag_detector" name="apriltag_detector" output="screen">
   </node>
+  <node pkg="colour_detector" type="colour_detection" name="colour_detector" output="screen">
+  </node>
+  <node name="pixy_node" pkg="pixy_node" type="pixy_node" output="screen">
+  </node>
+  <node pkg="serial_comms_node" type="serial_comms_node.py" name="serial_comms_node" output="screen">
+  </node>
 </launch>

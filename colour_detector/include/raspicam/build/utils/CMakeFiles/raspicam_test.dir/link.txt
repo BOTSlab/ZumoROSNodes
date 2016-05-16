@@ -1,1 +1,0 @@
-/usr/bin/c++    -std=c++0x -Wl,--no-as-needed  -Wall -ffunction-sections   -fomit-frame-pointer -O2 -ffast-math -DNDEBUG  -lpthread       CMakeFiles/raspicam_test.dir/raspicam_test.cpp.o  -o raspicam_test -rdynamic ../src/libraspicam.so.0.1.2 -lmmal_core -lmmal_util -lmmal -Wl,-rpath,/home/ubuntu/catkin_ws/src/raspicam/build/src: 

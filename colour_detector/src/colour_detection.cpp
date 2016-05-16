@@ -14,8 +14,8 @@ ros::Publisher detections_pub;
 
 using namespace cv;
 using namespace std;
-float imgCenterX = 370.0;
-float imgCenterY = 350.0;
+float imgCenterX = 370.0; //1288.0;
+float imgCenterY = 350.0; //737.0;
 float getDistance(float )
 {
 
@@ -25,16 +25,23 @@ colour_detector::ColourDetectionArray getDetectedColours(const cv_bridge::CvImag
     
 	Mat HSV;
 	cvtColor(cvSegmentationImage->image, HSV, COLOR_BGR2HSV);
+	//cv::imshow("image",HSV);
+
 	cv::Mat threshold;
 	inRange(HSV, lowerBound, higherBound, threshold);
+	//cv::Mat resizedthreshold;
+	//cv::resize(threshold, resizedthreshold, cv::Size(), 0.5,0.5, cv::INTER_LINEAR);
+	cv::waitKey(10);
+	cv::imshow("image",cvSegmentationImage->image);
 
+	//Morphological operators are far too slow
 	//morphological opening (removes small objects from the foreground)
-	erode(threshold, threshold, getStructuringElement(MORPH_ELLIPSE, Size(5, 5)));
-	dilate(threshold, threshold, getStructuringElement(MORPH_ELLIPSE, Size(5, 5)));
+	//erode(threshold, threshold, getStructuringElement(MORPH_ELLIPSE, Size(5, 5)));
+	//dilate(threshold, threshold, getStructuringElement(MORPH_ELLIPSE, Size(5, 5)));
 
 	//morphological closing (removes small holes from the foreground)
-	dilate(threshold, threshold, getStructuringElement(MORPH_ELLIPSE, Size(5, 5)));
-	erode(threshold, threshold, getStructuringElement(MORPH_ELLIPSE, Size(5, 5)));
+	//dilate(threshold, threshold, getStructuringElement(MORPH_ELLIPSE, Size(5, 5)));
+	//erode(threshold, threshold, getStructuringElement(MORPH_ELLIPSE, Size(5, 5)));
 
 	vector<vector<Point> > contours;
 	vector<Vec4i> hierarchy;
@@ -59,7 +66,11 @@ colour_detector::ColourDetectionArray getDetectedColours(const cv_bridge::CvImag
 		colourDetection.y = mu[i].m01 / mu[i].m00;
 		colourDetection.distance = sqrt(pow((imgCenterX - colourDetection.x), 2)+pow((imgCenterY - colourDetection.y), 2));
 		colourDetection.bearing = atan2((colourDetection.y - imgCenterY), (colourDetection.x - imgCenterX)) * 180 / PI ;
-		colourDetectionArray.detections.push_back(colourDetection);
+		// the min blob size depends on the size of the image being used. larger images will yield larger blobs and vice versa
+		if(colourDetection.blobSize > 100){
+			colourDetectionArray.detections.push_back(colourDetection);
+		}
+		
 	}
 	return colourDetectionArray;
 }
@@ -69,13 +80,17 @@ void imageCb(const sensor_msgs::ImageConstPtr &image){
 
 	cv_bridge::CvImageConstPtr cvSegmentationImage = cv_bridge::toCvCopy(image,"bgr8");
 
-        colourDetectionArray = getDetectedColours(cvSegmentationImage, Scalar(100,50,50), Scalar(130,255,255), "blue");
+        colourDetectionArray = getDetectedColours(cvSegmentationImage, Scalar(84,0,0), Scalar(150,255,255), "blue");
 	
 	//colour_detector::ColourDetectionArray redDetectionArray = getDetectedColours(cvSegmentationImage, Scalar(0, 50, 50), Scalar(0, 255, 255), "red");
 
-	colour_detector::ColourDetectionArray greenDetectionArray = getDetectedColours(cvSegmentationImage, Scalar(50, 50, 50), Scalar(65, 255, 255), "green");
-	
-	colourDetectionArray.detections.insert(colourDetectionArray.detections.end(), greenDetectionArray.detections.begin(), greenDetectionArray.detections.end());
+	//colour_detector::ColourDetectionArray greenDetectionArray = getDetectedColours(cvSegmentationImage, Scalar(50, 50, 50), Scalar(65, 255, 255), "green");
+	//colour_detector::ColourDetectionArray greenDetectionArray = getDetectedColours(cvSegmentationImage, Scalar(47, 50, 50), Scalar(58, 255, 255), "green");
+	//colour_detector::ColourDetectionArray orangeDetectionArray = getDetectedColours(cvSegmentationImage, Scalar(10, 0, 0), Scalar(18, 255, 255), "orange");
+	//colour_detector::ColourDetectionArray mauveDetectionArray = getDetectedColours(cvSegmentationImage, Scalar(165, 0, 0), Scalar(185, 255, 255), "mauve");
+	//colourDetectionArray.detections.insert(colourDetectionArray.detections.end(), greenDetectionArray.detections.begin(), greenDetectionArray.detections.end());
+	//colourDetectionArray.detections.insert(colourDetectionArray.detections.end(), orangeDetectionArray.detections.begin(), orangeDetectionArray.detections.end());
+	//colourDetectionArray.detections.insert(colourDetectionArray.detections.end(), mauveDetectionArray.detections.begin(), mauveDetectionArray.detections.end());
 
 	detections_pub.publish(colourDetectionArray);
 	//detections_pub.publish(redDetectionArray);
@@ -89,6 +104,11 @@ int main(int argc, char **argv)
 	ros::NodeHandle n;
 	ros::Subscriber imageSubscriber = n.subscribe("image_topic", 10, imageCb);
 	detections_pub = n.advertise<colour_detector::ColourDetectionArray>("coloursDetected", 1);
-	ros::spin();
+	ros::Rate r(10);
+	while(ros::ok()){
+		//begin();
+		ros::spinOnce();
+		r.sleep();
+	}
 	return(0);
 }

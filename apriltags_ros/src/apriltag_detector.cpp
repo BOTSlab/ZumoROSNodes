@@ -13,6 +13,8 @@
 #include <AprilTags/Tag36h11.h>
 
 
+float imgCenterX = 185.0; //370.0;
+float imgCenterY = 172.0; //350.0;
 
 double camera_focal_length_x(700); // in pixels. late 2013 macbookpro retina = 700
 double camera_focal_length_y(700); // in pixels
@@ -47,9 +49,11 @@ void imageCb(const sensor_msgs::ImageConstPtr &image){
 	cv_ptr = cv_bridge::toCvCopy(image, "bgr8");
 	cv::Mat image_gray;
 	cv::cvtColor(cv_ptr->image, image_gray, CV_BGR2GRAY);
+	
 	//image_gray.convertTo(image_gray, -1, 2, 0);
-	cv:threshold(image_gray, image_gray, 100, 255, cv::THRESH_BINARY);        
-
+	cv:threshold(image_gray, image_gray, 75, 255, cv::THRESH_BINARY);    
+	cv::imshow("image",image_gray);    
+	cv::waitKey(10);
 	vector<AprilTags::TagDetection> detections = tag_detector->extractTags(image_gray);
 	apriltags_ros::AprilTagDetectionArray tag_detection_array;
 	//std::cout << detections.size() << std::endl;
@@ -75,6 +79,8 @@ void imageCb(const sensor_msgs::ImageConstPtr &image){
 		tag_detection.pitch = pitch;
 		tag_detection.roll = roll;
 		tag_detection.code = detections[i].code;
+		tag_detection.distance = sqrt(pow((imgCenterX - tag_detection.x), 2)+pow((imgCenterY - tag_detection.y), 2));
+		tag_detection.bearing = atan2((tag_detection.y - imgCenterY), (tag_detection.x - imgCenterX)) * 180 / PI ;
 		tag_detection_array.detections.push_back(tag_detection);
 
 	}
@@ -85,8 +91,13 @@ int main(int argc, char **argv)
 {
 	ros::init(argc, argv, "apriltag_detector");
 	ros::NodeHandle n;
-	ros::Subscriber imageSubscriber = n.subscribe("image_topic", 1, imageCb);
+	ros::Subscriber imageSubscriber = n.subscribe("small_image_topic", 1, imageCb);
 	detections_pub = n.advertise<apriltags_ros::AprilTagDetectionArray>("aprilTags", 1);
-	ros::spin();
+	ros::Rate r(10);
+	while(ros::ok()){
+		//begin();
+		ros::spinOnce();
+		r.sleep();
+	}
 	return(0);
 }

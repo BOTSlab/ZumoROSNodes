@@ -1,7 +1,0 @@
-/home/ubuntu/catkin_ws/src/raspicam/build/src/CMakeFiles/raspicam.dir
-/home/ubuntu/catkin_ws/src/raspicam/build/src/CMakeFiles/raspicam_cv.dir
-/home/ubuntu/catkin_ws/src/raspicam/build/utils/CMakeFiles/raspicam_cv_still_test.dir
-/home/ubuntu/catkin_ws/src/raspicam/build/utils/CMakeFiles/raspicam_cv_test.dir
-/home/ubuntu/catkin_ws/src/raspicam/build/utils/CMakeFiles/raspicam_still_test.dir
-/home/ubuntu/catkin_ws/src/raspicam/build/utils/CMakeFiles/raspicam_test.dir
-/home/ubuntu/catkin_ws/src/raspicam/build/CMakeFiles/uninstall.dir
