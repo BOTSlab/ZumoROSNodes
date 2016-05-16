@@ -30,10 +30,7 @@ bool turnedLeft = false;
 bool turnedRight = false;
 std::vector<colour_detector::ColourDetection> detectedColours;
 std::vector<pixy_node::PixyBlock> pixyBlocks;
-<<<<<<< HEAD
 std::vector<apriltags_ros::AprilTagDetection> detectedTags;
-=======
->>>>>>> e364ecb9ea844af23ea547c3c12e64c0e893810f
 void publishMotorSpeed(string wheelSpeed) {
 
 	std_msgs::String msg;	
@@ -318,7 +315,6 @@ void coloursCb(const colour_detector::ColourDetectionArray::ConstPtr& msg){
 
 void pixyCb(const pixy_node::PixyData::ConstPtr& msg){
 	pixyBlocks = msg -> blocks;
-<<<<<<< HEAD
 }
 
 void aprilTagsCb(const apriltags_ros::AprilTagDetectionArray::ConstPtr& msg){
@@ -328,25 +324,6 @@ void aprilTagsCb(const apriltags_ros::AprilTagDetectionArray::ConstPtr& msg){
 void sensorsCb(const std_msgs::String::ConstPtr& msg){
 	if(msg -> data == ""){
 		proximityReading = 12;
-=======
-
-}
-void begin(){
-	if(pixyBlocks.size()>0){
-		printf("found block\n");
-		if(pixyBlocks[0].roi.x_offset < 130){
-			printf("turning left\n");
-			turnLeft();
-		}else{
-			if(pixyBlocks[0].roi.x_offset > 190){
-				printf("turning right\n");
-				turnRight();
-			}else{
-				printf("moving forwards\n");
-				moveForwards();
-			}
-		}
->>>>>>> e364ecb9ea844af23ea547c3c12e64c0e893810f
 	}else{
 		std::stringstream reading(msg -> data);
 		reading >> proximityReading;
