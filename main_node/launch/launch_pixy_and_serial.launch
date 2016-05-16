@@ -1,0 +1,8 @@
+<launch>
+  <node name="pixy_node" pkg="pixy_node" type="pixy_node" output="screen">
+  </node>
+  <node pkg="serial_comms_node" type="serial_comms_node.py" name="serial_comms_node" output="screen">
+  </node>
+  <node name="main_node" pkg="main_node" type="defaultBehaviour" output="screen">
+  </node>
+</launch>

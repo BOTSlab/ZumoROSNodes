@@ -1,0 +1,8 @@
+<launch>
+  <node pkg="camera_publisher" type="image_publisher.py" name="image_publisher" output="screen">
+  </node>
+  <node pkg="apriltags_ros" type="apriltag_detector" name="apriltag_detector" output="screen">
+  </node>
+  <node pkg="colour_detector" type="colour_detection" name="colour_detector" output="screen">
+  </node>
+</launch>
