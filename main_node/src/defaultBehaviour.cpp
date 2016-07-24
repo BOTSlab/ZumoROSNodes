@@ -12,6 +12,8 @@
 #include <pixy_node/PixyData.h>
 #include <pixy_node/PixyBlock.h>
 #include <pixy_node/Servo.h>
+#include <fstream>
+#include <ctime>
 using namespace std;
 
 ros::Publisher motorPublisher;
@@ -25,18 +27,51 @@ int proximityReading = 12;
 int puckYCoor = 0;//////////////////////////
 int puckXLCoor = 0;
 int puckXRCoor = 0;
-int avoidCounter = 0;
+
 string beaconPriorities [3] = {"0","1","2"};
+
 bool turnedLeft = false;
 bool turnedRight = false;
-bool firstSourceDepleted = false;
-bool secondSourceDepleted = false;
+
 std::vector<colour_detector::ColourDetection> detectedColours;
 std::vector<colour_detector::ColourDetection> blueColours;
 std::vector<colour_detector::ColourDetection> orangeColours;
 std::vector<colour_detector::ColourDetection> greenColours;
 std::vector<pixy_node::PixyBlock> pixyBlocks;
 std::vector<apriltags_ros::AprilTagDetection> detectedTags;
+
+bool canTurnRightBool = true;
+bool canTurnLeftBool = true;
+bool canMoveForwardsBool = true;
+
+int wanderCounterDefault = 3;
+int wanderCounter = wanderCounterDefault;
+int wanderDirection = 0;
+
+ofstream simulationLog;
+string simulationNumber = "2";
+string simulationHSINumber = "7";  //REMEMBER to update the same variable in beaconControl.cpp!!!!
+int logState = -1;
+
+// Get current date/time, format is YYYY-MM-DD.HH:mm:ss
+const std::string currentDateTime() {
+	time_t now = time(0);
+	struct tm tstruct;
+	char buf[80];
+	tstruct = *localtime(&now);
+	// Visit http://en.cppreference.com/w/cpp/chrono/c/strftime
+	// for more information about date/time format
+	strftime(buf, sizeof(buf), "%Y-%m-%d.%X", &tstruct);
+
+	return buf;
+}
+
+void writeToLog(string msg) {
+	simulationLog << msg;
+	simulationLog << " at: ";
+	simulationLog << currentDateTime();
+	simulationLog << "\n";
+}
 
 void publishMotorSpeed(string wheelSpeed) {
 
@@ -59,7 +94,7 @@ bool canSeeBlue() {
 
 bool pixyCanSeeGreen(){
 	for(int i=0; i<pixyBlocks.size(); i++){
-		if(pixyBlocks[i].signature == 5){
+		if(pixyBlocks[i].signature == 1){
 			return true;
 		}
 	}
@@ -101,25 +136,36 @@ bool canSeeOrange() {
 
 	return false;
 }
+bool canSeeNest() {
+	for(int i=0; i<detectedTags.size(); i++){
+		if(detectedTags[i].id == 0){
+			return true;
+		}
+	}
+	return false;
+}
+bool canSeeSource() {
+	for(int i=0; i<detectedTags.size(); i++){
+		if(detectedTags[i].id == 1){
+			return true;
+		}
+	}
+	return false;
+}
 /*
 	This method returns 0 if there is an obstacle to the left, 1 if there is no obstacle, and 2 if there is an obstacle to the right
 */
-int canMoveForwards() {
+bool canMoveForwards() {
+//take both pixy and rpi into consideration
+	return 0;
+}
 
-	//the pixy can't see the blue colour around the robots because it's mounted too high
-	for (uint i = 0; i < blueColours.size(); i++) {
-		if (blueColours[i].distance < 190.0 && blueColours[i].bearing > -60.0 && blueColours[i].bearing < 60.0){
-			if(blueColours[i].bearing < -3){
-				std::cout << "Obstacle on the left!" << std::endl;
-				return 0;
-			}else{
-				std::cout << "Obstacle on the right!" << std::endl;
-				return 2;
-			}
-		}
-	}
-	std::cout << "All clear move fowards!" << std::endl;
-	return 1;
+bool canTurnRight(){
+	return 0;
+}
+
+bool canTurnLeft(){
+	return 0;
 }
 
 bool atOrangeDestination() { //update values
@@ -214,18 +260,9 @@ bool atNest(){
 	return false;
 }
 
-bool atFirstSource(){
+bool atSource(){
 	for(int i=0; i<detectedTags.size(); i++){
 		if(detectedTags[i].id == 1){
-			return true;
-		}
-	}
-	return false;
-}
-
-bool atSecondSource(){
-	for(int i=0; i<detectedTags.size(); i++){
-		if(detectedTags[i].id == 2){
 			return true;
 		}
 	}
@@ -246,50 +283,66 @@ bool hasPuck(){
 }
 
 
-void avoid(int direction) {
-	if(direction == 0){
-	std::cout << "avoiding by going right" << std::endl;
+void avoid() {
+if (canTurnRight) {
 		turnRight();
-	}else{
-		if(direction == 1){
-			std::cout << "avoiding by going forwards" << std::endl;
-			moveForwards();
-		}else{
-			std::cout << "avoiding by going left" << std::endl;
-			turnLeft();	
+		//printf("Avoiding Right...");
+	} else {
+		if (canTurnLeft) {
+			turnLeft();
+			//printf("Avoiding Forwards...");
+		} else {
+			if (canMoveForwards) {
+				moveForwards();
+				//printf("Avoiding Left...");
+			}
+			else{
+				if(hasPuck){
+					stop();
+				}else{
+					moveBackwards();
+				}
+			}
 		}
 	}
+	//ros::Duration(1.0).sleep();
 
 }
 
 void wander(){
-	int randomNumber = rand() % 4;
-	if(randomNumber == 0){
-		std::cout << "turning left\n" << std::endl;
-		turnLeft();
-		ros::Duration(2.0).sleep();
-	}else{
-		if(randomNumber == 1){
-			std::cout << "turning right\n" << std::endl;
-			turnRight();
-			ros::Duration(2.0).sleep();
-		}else{
-			std::cout << "moving forwards\n" << std::endl;
-			if(canMoveForwards() == 1){
-				moveForwards();
-				ros::Duration(2.0).sleep();
-			}else{
-				/*randomNumber = rand() % 2;
-				if(randomNumber == 0){
-					turnLeft();
-				}else{
-					turnRight();
-				}*/
-				avoidCounter = 10;
-				avoid(canMoveForwards());
+// ToDo: collision detection when wandering
+	if (wanderCounter > 0) {
+		wanderCounter--;
+		switch (wanderDirection) {
+		case 0:
+			if (canTurnLeft) {
+				turnLeft();
+			} else {
+				//	printf("Can't wander left! Avoiding \n");
+				avoid();
 			}
-			
+			break;
+		case 1:
+			if (canTurnRight) {
+				turnRight();
+			} else {
+				//printf("Can't wander right! Avoiding\n");
+				avoid();
+			}
+			break;
+		default:
+			if (canMoveForwards) {
+				moveForwards();
+			} else {
+				//printf("Can't wander forwards! Avoiding\n");
+				avoid();
+			}
+			break;
 		}
+	} else {
+		wanderDirection = rand() % 3;
+		wanderCounter = wanderCounterDefault;
+		wander();
 	}
 
 }
@@ -307,8 +360,8 @@ void moveToPixy(int x_offset, int y_offset) {
 		if (canMoveForwards() == 1) {
 			moveForwards();
 		} else {
-			avoidCounter = 10;
-			avoid(canMoveForwards());
+			//avoidCounter = 5;
+			avoid();
 		}
 		return;
 	}
@@ -319,7 +372,7 @@ void moveToPixy(int x_offset, int y_offset) {
 			turnRightSlow();
 		//} else {
 		//	avoidCounter = 5;
-		//	avoid(canMoveForwards());
+		//	avoid();
 		//}
 		return;
 	}
@@ -329,7 +382,7 @@ void moveToPixy(int x_offset, int y_offset) {
 			turnLeftSlow();
 		//} else {
 		//	avoidCounter = 5;
-		//	avoid(canMoveForwards());
+		//	avoid();
 		//}
 
 	}
@@ -342,8 +395,8 @@ void moveTo(int distance, int bearing) {
 		if (canMoveForwards() == 1) {
 			moveForwards();
 		} else {
-			avoidCounter = 10;
-			avoid(canMoveForwards());
+			//avoidCounter = 5;
+			avoid();
 		}
 		return;
 	}
@@ -354,7 +407,7 @@ void moveTo(int distance, int bearing) {
 		turnRight();
 	//	} else {
 	//		avoidCounter = 5;
-	//		avoid(canMoveForwards());
+	//		avoid();
 	//	}
 		return;
 	}
@@ -364,19 +417,27 @@ void moveTo(int distance, int bearing) {
 			turnLeft();
 		//} else {
 		//	avoidCounter = 5;
-		//	avoid(canMoveForwards());
+		//	avoid();
 		//}
 
 	}
 
 }
 
+void goToSource() {
+
+}
+
+
+bool canSeePuck() {
+	return false;
+}
 
 void pickUpPuck(){
 // TODO: add signature to differentiate pucks from others
-	if(pixyBlocks.size()>0){
-		for (int i=0; i<pixyBlocks.size(); i++){
-			std::cout << pixyBlocks[i].roi.x_offset << "\n" <<std::endl;
+	if(greenColours.size()>0){
+		for (int i=0; i<greenColours.size(); i++){
+			//std::cout << greenColours[i].roi.x_offset << "\n" <<std::endl;
 			if(pixyBlocks[i].roi.x_offset < 110){
 				std::cout << "turning left\n" << std::endl;
 				turnLeftSlow();
@@ -419,17 +480,23 @@ void pixyPickUpPuck(){
 	int destX, minDestY;
 	minDestY = 1000;
 	for(int i=0; i<pixyBlocks.size();i++){
-		if(pixyBlocks[i].signature == 5 && pixyBlocks[i].roi.y_offset < minDestY){
+		if(pixyBlocks[i].signature == 1 && pixyBlocks[i].roi.y_offset < minDestY){
 			destX = pixyBlocks[i].roi.x_offset;
 			minDestY = pixyBlocks[i].roi.y_offset;
 		}
 	}
 	moveToPixy(destX, minDestY);
 }
+void goToNest() {
+	/*if (canSeeYellow()) {
+		moveTo(detectedYellowColours[0].x, detectedYellowColours[0].y);
+	}*/
+}
 
 void coloursCb(const colour_detector::ColourDetectionArray::ConstPtr& msg){
 
 	detectedColours = msg -> detections;
+
 	blueColours.clear();
 	greenColours.clear();
 	orangeColours.clear();
@@ -470,85 +537,88 @@ void sensorsCb(const std_msgs::String::ConstPtr& msg){
 
 }
 void begin(){
-
 	/*
-	Signal a go to nest command with april tag?
-	if(firstSourceDepleted && secondSourceDepleted && atNest()){
-		std::cout << "Task Completed: Stopping." << std::endl;
-		stop();
-		return;
-	}*/
-	std::cout << avoidCounter << std::endl;
-	if(avoidCounter > 0){
-		std::cout << "AVOIDING!!!" << std::endl;
-		avoid(canMoveForwards());
-		avoidCounter--;
-		return;
-	}
-	if(firstSourceDepleted && secondSourceDepleted && !atNest()){
-		std::cout << "All sources depleted. Looking for nest." << std::endl;
-		wander();
-		return;
-	}
-	if(hasPuck() && !atNest()){
-		std::cout << "Looking for nest to deposit puck." << std::endl;
-		wander();
-		return;
-	}
-	if(hasPuck() && atNest()){
-		std::cout << "Depositing Puck at nest." << std::endl;
+	 * Log states are: 0 for wandering, 1 for going to nest, 2 for going to source, 3 for picking up puck, 4 for depositing puck, 5 for beacon action
+	 */
+	//TODO: reimplement atnest canseenest atsource and canseesource
+	//TODO: reimplement cansee and goto methods to include the pixy as well as remove pixy checks in this section
+	if (hasPuck && atNest()) {
+		//std::cout << "Depositing Puck at nest." << std::endl;
+		if (logState != 4) {
+			//printf("depositing puck\n");
+			logState = 4;
+			writeToLog("Depositing a Puck");
+		}
 		depositPuck();
 		return;
 	}
-	if(!hasPuck() && atFirstSource()){
-		if(pixyCanSeeGreen()){
-			std::cout << "Picking up puck at first source via pixy." << std::endl;
-			pixyPickUpPuck();
-			return;
+
+	if (hasPuck && canSeeNest()) {
+
+		if (logState != 1) {
+			//std::cout << "going to nest\n" << std::endl ;
+			logState = 1;
+			writeToLog("Going to Nest");
 		}
-		if(piCamCanSeeGreen()){
-			std::cout << "Picking up puck at first source via picamera." << std::endl;
-			piCamGoToNearestPuck();
-			return;
-		}
-		// in this case there is no green around the first source so we assume it ran out
-		std::cout << "First source has no pucks, is depleted. Wandering." << std::endl;
-		wander();
+
+		goToNest();
 		return;
 	}
-	if(!hasPuck() && atSecondSource()){
-		if(pixyCanSeeGreen()){
-			std::cout << "Picking up puck at second source via pixy." << std::endl;
-			pixyPickUpPuck();
-			secondSourceDepleted = false;
-			return;
+
+	//changed for can see source to at source
+	if (atSource() && !hasPuck && canSeePuck()) {
+
+		if (logState != 3) {
+			//std::cout >> "Picking up a puck\n" << std::endl;
+			logState = 3;
+			writeToLog("Picking up a Puck");
 		}
-		if(piCamCanSeeGreen()){
-			std::cout << "Picking up puck at second source via picamera." << std::endl;
-			piCamGoToNearestPuck();
-			return;
+		pickUpPuck();
+		return;
+	}
+
+	// might need to remove this one
+	if (canSeeSource() && !hasPuck) {
+
+		if (logState != 2) {
+			//std::cout >> "Approaching Source\n" << std::endl;
+			logState = 2;
+			writeToLog("Going to Source");
 		}
-		// in this case there is no green around the first source so we assume it ran out
-		std::cout << "Second source has no pucks. Wandering." << std::endl;
+		goToSource();
+		return;
+	}
+
+if ((!hasPuck && !canSeeSource()) || (hasPuck && !canSeeNest())) {
+		//std::cout >> "Wandering...\n" << std::endl;
+		if (logState != 0) {
+			logState = 0;
+			if (hasPuck) {
+				writeToLog("Wandering with a Puck");
+			} else {
+				writeToLog("Wandering without a Puck");
+			}
+
+		}
 		wander();
 		return;
 	}
 
-	if(!hasPuck() && !atFirstSource() && !atSecondSource()){
-		std::cout << "Finding pucks, wandering." << std::endl;
+	if (atSource() && !hasPuck && !canSeePuck()) {
+
+		if (logState != 0) {
+			//std::cout >> "Can't find pucks at source, wandering!\n" << std::endl;
+			logState = 0;
+			writeToLog("Wandering without a Puck");
+		}
 		wander();
 		return;
 	}
 
+	//std::cout >> "don't know what to do\n" << std::endl;
+	stop();
 
-/*
-		if(pixyCanSeeGreen()){
-			std::cout << "Picking up puck at second source via pixy." << std::endl;
-			pixyPickUpPuck();
-			secondSourceDepleted = false;
-			return;
-		}
-*/
+
 }
 
 int main(int argc, char **argv) {
