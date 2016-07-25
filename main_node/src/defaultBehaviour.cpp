@@ -40,9 +40,9 @@ std::vector<colour_detector::ColourDetection> greenColours;
 std::vector<pixy_node::PixyBlock> pixyBlocks;
 std::vector<apriltags_ros::AprilTagDetection> detectedTags;
 
-bool canTurnRightBool = true;
-bool canTurnLeftBool = true;
-bool canMoveForwardsBool = true;
+bool canTurnRight = true;
+bool canTurnLeft = true;
+bool canMoveForwards = true;
 
 int wanderCounterDefault = 3;
 int wanderCounter = wanderCounterDefault;
@@ -52,6 +52,8 @@ ofstream simulationLog;
 string simulationNumber = "2";
 string simulationHSINumber = "7";  //REMEMBER to update the same variable in beaconControl.cpp!!!!
 int logState = -1;
+
+/****************** LOGGING ******************/
 
 // Get current date/time, format is YYYY-MM-DD.HH:mm:ss
 const std::string currentDateTime() {
@@ -73,6 +75,8 @@ void writeToLog(string msg) {
 	simulationLog << "\n";
 }
 
+/****************** Issuing Movement Commands To Motors ******************/
+
 void publishMotorSpeed(string wheelSpeed) {
 
 	std_msgs::String msg;	
@@ -80,17 +84,37 @@ void publishMotorSpeed(string wheelSpeed) {
 	ss << wheelSpeed;
 	msg.data = ss.str();
 	motorPublisher.publish(msg);
-	
+}
+
+void moveForwards() {
+	publishMotorSpeed("F");
+}
+void turnRight() {
+	publishMotorSpeed("R");
+}
+void turnRightSlow() {
+	publishMotorSpeed("E");
+}
+void turnLeft() {
+	publishMotorSpeed("L");
 
 }
-// green is 0, orange is 1? for now
-bool canSeeBlue() {
-	if(blueColours.size()>0){
-		return true;
-	}
+void turnLeftSlow() {
+	publishMotorSpeed("K");
 
-	return false;
 }
+void stop() {
+	publishMotorSpeed("S");
+}
+
+void moveBackwards(){
+	publishMotorSpeed("B");
+}
+
+/****************** Colour Detections ******************/
+/*
+	For each robot adjust pixy signatures
+*/
 
 bool pixyCanSeeGreen(){
 	for(int i=0; i<pixyBlocks.size(); i++){
@@ -126,47 +150,96 @@ bool pixyCanSeeOrange(){
 	return false;
 }
 
-bool canSeeOrange() {
+bool piCamCanSeeOrange(){
 	if(orangeColours.size()>0){
+		return true;
+	}
+}
+
+bool canSeeOrange() {
+	if(piCamCanSeeOrange()){
 		return true;
 	}
 	if(pixyCanSeeOrange()){
 		return true;
 	}
-
 	return false;
 }
+
+bool pixyCanSeeBlue(){
+	for(int i=0; i<pixyBlocks.size(); i++){
+		if(pixyBlocks[i].signature == 2){
+			return true;
+		}
+	}
+	return false;
+}
+
+bool piCamCanSeeBlue(){
+	if(blueColours.size()>0){
+		return true;
+	}
+}
+
+// green is 0, orange is 1? for now
+bool canSeeBlue() {
+	if(pixyCanSeeBlue()){
+		return true;
+	}
+	if(piCamCanSeeBlue()){
+		return true;
+	}
+	return false;
+}
+
+/****************** Landmark Detections ******************/
+/*
+	For each robot adjust detection distances
+*/
+
 bool canSeeNest() {
-	for(int i=0; i<detectedTags.size(); i++){
+	/*for(int i=0; i<detectedTags.size(); i++){
 		if(detectedTags[i].id == 0){
 			return true;
 		}
-	}
+	}*/
+	for(int i=0; i<detectedTags.size(); i++){
+	if(detectedTags[i].id == 0 && detectedTags[i].distance > 170){ //edit
+		return true;
+	} //if assigned an extra colour then use that too
 	return false;
 }
-bool canSeeSource() {
+
+
+//range is limited so just seeing the tag means the robot is where it needs to be?
+bool atNest(){
 	for(int i=0; i<detectedTags.size(); i++){
-		if(detectedTags[i].id == 1){
+		if(detectedTags[i].id == 0 && detectedTags[i].distance <= 170){
 			return true;
 		}
 	}
 	return false;
 }
-/*
-	This method returns 0 if there is an obstacle to the left, 1 if there is no obstacle, and 2 if there is an obstacle to the right
-*/
-bool canMoveForwards() {
-//take both pixy and rpi into consideration
-	return 0;
+
+
+bool canSeeSource() {
+	for(int i=0; i<detectedTags.size(); i++){
+		if(detectedTags[i].id == 1 && detectedTags[i].distance > 170){
+			return true;
+		}
+	}
+	return false;
 }
 
-bool canTurnRight(){
-	return 0;
+bool atSource(){
+	for(int i=0; i<detectedTags.size(); i++){
+		if(detectedTags[i].id == 1 && detectedTags[i].distance <= 170){
+			return true;
+		}
+	}
+	return false;
 }
 
-bool canTurnLeft(){
-	return 0;
-}
 
 bool atOrangeDestination() { //update values
 	for(int i=0; i<orangeColours.size();i++){
@@ -185,6 +258,18 @@ bool atGreenDestination() { //update values
 	}
 	return false;
 }
+
+bool canSeeBeacon(){
+	if(canSeeOrange()){
+		return true;
+	}
+	return false;
+}
+
+/****************** Target Locations ******************/
+/*
+	For each robot adjust detection distances and bearings
+*/
 
 bool destinationIsAhead(int bearing) {
 	if (bearing <= 30 && bearing >= -35) {
@@ -224,57 +309,10 @@ bool destinationIsLeftPixy(int x_offset) {
 	}
 	return false;
 }
-void moveForwards() {
-	publishMotorSpeed("F");
-}
-void turnRight() {
-	publishMotorSpeed("R");
-}
-void turnRightSlow() {
-	publishMotorSpeed("E");
-}
-void turnLeft() {
-	publishMotorSpeed("L");
-
-}
-void turnLeftSlow() {
-	publishMotorSpeed("K");
-
-}
-void stop() {
-	publishMotorSpeed("S");
-}
-
-void moveBackwards(){
-	publishMotorSpeed("B");
-}
 
 
-//range is limited so just seeing the tag means the robot is where it needs to be
-bool atNest(){
-	for(int i=0; i<detectedTags.size(); i++){
-		if(detectedTags[i].id == 0){
-			return true;
-		}
-	}
-	return false;
-}
 
-bool atSource(){
-	for(int i=0; i<detectedTags.size(); i++){
-		if(detectedTags[i].id == 1){
-			return true;
-		}
-	}
-	return false;
-}
 
-bool canSeeBeacon(){
-	if(canSeeOrange()){
-		return true;
-	}
-	return false;
-}
 bool hasPuck(){
 	if(proximityReading == 12){
 		return false;
@@ -282,6 +320,7 @@ bool hasPuck(){
 	return true;
 }
 
+/****************** Movement Functions ******************/
 
 void avoid() {
 if (canTurnRight) {
@@ -357,7 +396,7 @@ void moveToPixy(int x_offset, int y_offset) {
 	}
 	if (destinationIsAheadPixy(x_offset)) {
 		std::cout << "destination IS ahead" << std::endl;
-		if (canMoveForwards() == 1) {
+		if (canMoveForwards {
 			moveForwards();
 		} else {
 			//avoidCounter = 5;
@@ -367,7 +406,7 @@ void moveToPixy(int x_offset, int y_offset) {
 	}
 
 	if (destinationIsRightPixy(x_offset)) {
-		//if (canTurnRight()) {
+		//if (canTurnRight {
 			std::cout << "NOT ahead, turning right" << std::endl;
 			turnRightSlow();
 		//} else {
@@ -377,7 +416,7 @@ void moveToPixy(int x_offset, int y_offset) {
 		return;
 	}
 	if (destinationIsLeftPixy(x_offset)) {
-		//if (canTurnLeft()) {
+		//if (canTurnLeft {
 			std::cout << "NOT ahead, turning left" << std::endl;
 			turnLeftSlow();
 		//} else {
@@ -392,7 +431,7 @@ void moveTo(int distance, int bearing) {
 
 	if (destinationIsAhead(bearing)) {
 		std::cout << "destination IS ahead" << std::endl;
-		if (canMoveForwards() == 1) {
+		if (canMoveForwards) {
 			moveForwards();
 		} else {
 			//avoidCounter = 5;
@@ -402,7 +441,7 @@ void moveTo(int distance, int bearing) {
 	}
 
 	if (destinationIsRight(bearing)) {
-	//	if (canTurnRight()) {
+	//	if (canTurnRight {
 		std::cout << "bearing is " << bearing << " turning right" << std::endl;
 		turnRight();
 	//	} else {
@@ -412,7 +451,7 @@ void moveTo(int distance, int bearing) {
 		return;
 	}
 	if (destinationIsLeft(bearing)) {
-		//if (canTurnLeft()) {
+		//if (canTurnLeft {
 			std::cout << "bearing is " << bearing << " turning left" << std::endl;
 			turnLeft();
 		//} else {
@@ -424,35 +463,57 @@ void moveTo(int distance, int bearing) {
 
 }
 
-void goToSource() {
+/****************** GoTo Functions ******************/
 
+void goToNest() {
+	/*if (canSeeYellow()) {
+		moveTo(detectedYellowColours[0].x, detectedYellowColours[0].y);
+	}*/
+		for(int i=0; i<detectedTags.size(); i++){
+		if(detectedTags[i].id == 0){
+			moveTo(detectedTags[i].distance, detectedTags[i].bearing);
+		}
+	}
 }
 
+void goToSource() {
+		for(int i=0; i<detectedTags.size(); i++){
+		if(detectedTags[i].id == 1){
+			moveTo(detectedTags[i].distance, detectedTags[i].bearing);
+		}
+	}
+}
 
+/****************** Puck Functions ******************/
+/*
+	For each robot adjust detection distances and bearings
+*/
 bool canSeePuck() {
-	return false;
+	if(greenColours.size()>0){
+		return true;
+	}else{
+		return false;
+	}
 }
 
 void pickUpPuck(){
 // TODO: add signature to differentiate pucks from others
-	if(greenColours.size()>0){
-		for (int i=0; i<greenColours.size(); i++){
-			//std::cout << greenColours[i].roi.x_offset << "\n" <<std::endl;
-			if(pixyBlocks[i].roi.x_offset < 110){
-				std::cout << "turning left\n" << std::endl;
-				turnLeftSlow();
+	int max = 0;
+	int maxX = 0;
+	for (int i=0; i<greenColours.size(); i++){
+		//std::cout << greenColours[i].roi.x_offset << "\n" <<std::endl;
+		if(pixyBlocks[i].roi.x_offset < 110){
+			std::cout << "turning left\n" << std::endl;
+			turnLeftSlow();
+		}else{
+			if(pixyBlocks[i].roi.x_offset > 190){
+				std::cout << "turning right\n" << std::endl;
+				turnRightSlow();
 			}else{
-				if(pixyBlocks[i].roi.x_offset > 190){
-					std::cout << "turning right\n" << std::endl;
-					turnRightSlow();
-				}else{
-					std::cout << "moving forwards\n" << std::endl;
-					moveForwards();
-				}
+				std::cout << "moving forwards\n" << std::endl;
+				moveForwards();
 			}
 		}
-	}else{
-		stop();
 	}
 }
 
@@ -473,7 +534,9 @@ void depositPuck(){
 		moveBackwards();
 		ros::Duration(2.0).sleep();
 	}
-
+	avoid();
+	ros::Duration(1.5).sleep();
+	return;
 }
 void pixyPickUpPuck(){
 
@@ -487,16 +550,16 @@ void pixyPickUpPuck(){
 	}
 	moveToPixy(destX, minDestY);
 }
-void goToNest() {
-	/*if (canSeeYellow()) {
-		moveTo(detectedYellowColours[0].x, detectedYellowColours[0].y);
-	}*/
-}
+
+
+/****************** Callback Functions ******************/
 
 void coloursCb(const colour_detector::ColourDetectionArray::ConstPtr& msg){
 
 	detectedColours = msg -> detections;
-
+	canMoveForwards = msg -> canMoveForwards;
+	canTurnLeft = msg -> canTurnLeft;
+	canTurnRight = msg -> canTurnRight;
 	blueColours.clear();
 	greenColours.clear();
 	orangeColours.clear();
@@ -536,12 +599,13 @@ void sensorsCb(const std_msgs::String::ConstPtr& msg){
 	}
 
 }
+/****************** Main Behaviour Functions ******************/
+
 void begin(){
 	/*
 	 * Log states are: 0 for wandering, 1 for going to nest, 2 for going to source, 3 for picking up puck, 4 for depositing puck, 5 for beacon action
 	 */
-	//TODO: reimplement atnest canseenest atsource and canseesource
-	//TODO: reimplement cansee and goto methods to include the pixy as well as remove pixy checks in this section
+	
 	if (hasPuck && atNest()) {
 		//std::cout << "Depositing Puck at nest." << std::endl;
 		if (logState != 4) {
