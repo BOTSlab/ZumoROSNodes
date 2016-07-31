@@ -3,7 +3,9 @@
 #include <stdlib.h>
 #include <sstream>
 #include <string>
+#include <std_msgs/Bool.h>
 #include <std_msgs/String.h>
+#include <geometry_msgs/Twist.h>
 #include <colour_detector/ColourDetection.h>
 #include <colour_detector/ColourDetectionArray.h>
 #include <apriltags_ros/AprilTagDetection.h>
@@ -12,11 +14,13 @@
 #include <pixy_node/PixyData.h>
 #include <pixy_node/PixyBlock.h>
 #include <pixy_node/Servo.h>
+#include <bupimo_msgs/ZumoData.h>
 #include <fstream>
 #include <ctime>
 using namespace std;
 
 ros::Publisher motorPublisher;
+ros::Publisher servoPublisher;
 
 
 int state = 0;
@@ -48,6 +52,11 @@ int wanderCounterDefault = 3;
 int wanderCounter = wanderCounterDefault;
 int wanderDirection = 0;
 
+int pixyGreenSignature = 2;
+
+bool hasPuck = false;
+bool openedServo = false;
+
 ofstream simulationLog;
 string simulationNumber = "2";
 string simulationHSINumber = "7";  //REMEMBER to update the same variable in beaconControl.cpp!!!!
@@ -75,14 +84,37 @@ void writeToLog(string msg) {
 	simulationLog << "\n";
 }
 
-/****************** Issuing Movement Commands To Motors ******************/
+/****************** Issuing Movement Commands To Motors and Servo ******************/
 
 void publishMotorSpeed(string wheelSpeed) {
-
-	std_msgs::String msg;	
-	std::stringstream ss;
-	ss << wheelSpeed;
-	msg.data = ss.str();
+	geometry_msgs::Twist msg;
+	if(wheelSpeed == "F"){
+		msg.linear.x = 0.1;
+	}
+	if(wheelSpeed == "R"){
+		msg.linear.x = 0.0;
+		msg.angular.z = -1.0;
+	}
+	if(wheelSpeed == "E"){
+		msg.linear.x = 0.0;
+		msg.angular.z = -0.5;
+	}
+	if(wheelSpeed == "L"){
+		msg.linear.x = 0.0;
+		msg.angular.z = 1.0;
+	}
+	if(wheelSpeed == "K"){	
+		msg.linear.x = 0.0;
+		msg.angular.z = 0.5;
+	}
+	if(wheelSpeed == "S"){	
+		msg.linear.x = 0.0;
+		msg.angular.z = 0.0;
+	}
+	if(wheelSpeed == "B"){	
+		msg.linear.x = -0.1;
+		msg.angular.z = 0.0;
+	}
 	motorPublisher.publish(msg);
 }
 
@@ -109,6 +141,20 @@ void stop() {
 
 void moveBackwards(){
 	publishMotorSpeed("B");
+}
+
+void closeServo(){
+	std_msgs::Bool msg;
+	msg.data = 0;
+	servoPublisher.publish(msg);
+	
+}
+
+void openServo(){
+	std_msgs::Bool msg;
+	msg.data = 1;
+	servoPublisher.publish(msg);
+	
 }
 
 /****************** Colour Detections ******************/
@@ -203,21 +249,23 @@ bool canSeeNest() {
 			return true;
 		}
 	}*/
+/*
 	for(int i=0; i<detectedTags.size(); i++){
-	if(detectedTags[i].id == 0 && detectedTags[i].distance > 170){ //edit
-		return true;
-	} //if assigned an extra colour then use that too
-	return false;
+		if(detectedTags[i].id == 0 && detectedTags[i].distance > 170){ //edit
+			return true;
+		}
+	}//if assigned an extra colour then use that too
+*/	return false;
 }
 
 
 //range is limited so just seeing the tag means the robot is where it needs to be?
 bool atNest(){
-	for(int i=0; i<detectedTags.size(); i++){
+	/*for(int i=0; i<detectedTags.size(); i++){
 		if(detectedTags[i].id == 0 && detectedTags[i].distance <= 170){
 			return true;
 		}
-	}
+	}*/
 	return false;
 }
 
@@ -313,12 +361,12 @@ bool destinationIsLeftPixy(int x_offset) {
 
 
 
-bool hasPuck(){
+/*bool hasPuck(){
 	if(proximityReading == 12){
 		return false;
 	}
 	return true;
-}
+}*/
 
 /****************** Movement Functions ******************/
 
@@ -396,7 +444,7 @@ void moveToPixy(int x_offset, int y_offset) {
 	}
 	if (destinationIsAheadPixy(x_offset)) {
 		std::cout << "destination IS ahead" << std::endl;
-		if (canMoveForwards {
+		if (canMoveForwards) {
 			moveForwards();
 		} else {
 			//avoidCounter = 5;
@@ -406,7 +454,7 @@ void moveToPixy(int x_offset, int y_offset) {
 	}
 
 	if (destinationIsRightPixy(x_offset)) {
-		//if (canTurnRight {
+		//if (canTurnRight) {
 			std::cout << "NOT ahead, turning right" << std::endl;
 			turnRightSlow();
 		//} else {
@@ -416,7 +464,7 @@ void moveToPixy(int x_offset, int y_offset) {
 		return;
 	}
 	if (destinationIsLeftPixy(x_offset)) {
-		//if (canTurnLeft {
+		//if (canTurnLeft) {
 			std::cout << "NOT ahead, turning left" << std::endl;
 			turnLeftSlow();
 		//} else {
@@ -441,7 +489,7 @@ void moveTo(int distance, int bearing) {
 	}
 
 	if (destinationIsRight(bearing)) {
-	//	if (canTurnRight {
+	//	if (canTurnRight) {
 		std::cout << "bearing is " << bearing << " turning right" << std::endl;
 		turnRight();
 	//	} else {
@@ -451,7 +499,7 @@ void moveTo(int distance, int bearing) {
 		return;
 	}
 	if (destinationIsLeft(bearing)) {
-		//if (canTurnLeft {
+		//if (canTurnLeft) {
 			std::cout << "bearing is " << bearing << " turning left" << std::endl;
 			turnLeft();
 		//} else {
@@ -469,27 +517,45 @@ void goToNest() {
 	/*if (canSeeYellow()) {
 		moveTo(detectedYellowColours[0].x, detectedYellowColours[0].y);
 	}*/
-		for(int i=0; i<detectedTags.size(); i++){
+	/*	for(int i=0; i<detectedTags.size(); i++){
 		if(detectedTags[i].id == 0){
 			moveTo(detectedTags[i].distance, detectedTags[i].bearing);
 		}
-	}
+	}*/
 }
 
 void goToSource() {
-		for(int i=0; i<detectedTags.size(); i++){
+	/*	for(int i=0; i<detectedTags.size(); i++){
 		if(detectedTags[i].id == 1){
 			moveTo(detectedTags[i].distance, detectedTags[i].bearing);
 		}
-	}
+	}*/
 }
 
 /****************** Puck Functions ******************/
 /*
 	For each robot adjust detection distances and bearings
 */
-bool canSeePuck() {
+
+bool pixyCanSeePuck(){
+	for (int i=0; i<pixyBlocks.size(); i++){
+		if(pixyBlocks[i].signature == pixyGreenSignature){
+			return true;
+		}
+	}
+	return false;
+}
+
+bool piCamCanSeePuck(){
 	if(greenColours.size()>0){
+		return true;
+	}else{
+		return false;
+	}
+}
+
+bool canSeePuck() {
+	if(piCamCanSeePuck() || pixyCanSeePuck()){
 		return true;
 	}else{
 		return false;
@@ -498,23 +564,40 @@ bool canSeePuck() {
 
 void pickUpPuck(){
 // TODO: add signature to differentiate pucks from others
+	if(!openedServo){
+		openedServo = true;
+		ros::Duration(1.0).sleep();
+		openServo();
+	}
 	int max = 0;
 	int maxX = 0;
-	for (int i=0; i<greenColours.size(); i++){
-		//std::cout << greenColours[i].roi.x_offset << "\n" <<std::endl;
-		if(pixyBlocks[i].roi.x_offset < 110){
-			std::cout << "turning left\n" << std::endl;
-			turnLeftSlow();
-		}else{
-			if(pixyBlocks[i].roi.x_offset > 190){
-				std::cout << "turning right\n" << std::endl;
-				turnRightSlow();
-			}else{
-				std::cout << "moving forwards\n" << std::endl;
-				moveForwards();
+	if(proximityReading < 12){
+		hasPuck = true;
+		closeServo();
+		openedServo = false;
+		
+	}else{
+		for (int i=0; i<pixyBlocks.size(); i++){
+			if(pixyBlocks[i].signature == pixyGreenSignature){
+				if(pixyBlocks[i].roi.x_offset > 140 && pixyBlocks[i].roi.x_offset < 200 &&pixyBlocks[i].roi.y_offset > 140){
+					moveForwards();
+				}else{
+					if(pixyBlocks[i].roi.x_offset < 110){
+						turnLeftSlow();
+					}else{
+						if(pixyBlocks[i].roi.x_offset > 190){
+							turnRightSlow();
+						}else{
+							moveForwards();
+						}
+					}
+				}
+				
 			}
+			
 		}
 	}
+
 }
 
 void piCamGoToNearestPuck(){
@@ -529,13 +612,19 @@ void piCamGoToNearestPuck(){
 	moveTo(minDistance, bearing);
 }
 void depositPuck(){
-	
-	if(hasPuck()){
+//std::cout << "Depositing Puck" << std::endl;
+	if(hasPuck){
+		ros::Duration(1.0).sleep();
+		openServo();
+		ros::Duration(1.0).sleep();
 		moveBackwards();
-		ros::Duration(2.0).sleep();
+		ros::Duration(1.0).sleep();
+		closeServo();
+		std::cout <<"setting to false" << std::endl;
+		hasPuck = false;
 	}
-	avoid();
-	ros::Duration(1.5).sleep();
+	//avoid();
+	//ros::Duration(1.5).sleep();
 	return;
 }
 void pixyPickUpPuck(){
@@ -590,18 +679,36 @@ void aprilTagsCb(const apriltags_ros::AprilTagDetectionArray::ConstPtr& msg){
 	detectedTags = msg -> detections;
 }
 
-void sensorsCb(const std_msgs::String::ConstPtr& msg){
-	if(msg -> data == ""){
-		proximityReading = 12;
-	}else{
-		std::stringstream reading(msg -> data);
-		reading >> proximityReading;
-	}
-
+void sensorsCb(const bupimo_msgs::ZumoData::ConstPtr& msg){
+	proximityReading =  msg -> frontProximity;
 }
 /****************** Main Behaviour Functions ******************/
-
 void begin(){
+	//pickUpPuck();
+	//std::cout << "Has Puck: " << hasPuck << std::endl;
+	//turnRight();
+	/*std::cout << "Closing servo" << std::endl;
+	closeServo();
+	ros::Duration(3.0).sleep();
+	std::cout << "Opening servo" << std::endl;
+	openServo();
+	ros::Duration(3.0).sleep();*/
+	/*if(!hasPuck){
+		//std::cout << "Picking up puck" << std::endl;
+		pickUpPuck();
+	}else{
+		//std::cout << "Picked up puck, stopping." << std::endl;
+		//std::cout << "Has Puck: " << hasPuck << std::endl;
+		stop();
+		//ros::Duration(3.0).sleep();
+		//depositPuck();
+	}*/
+        //hasPuck = true;
+	//depositPuck();
+
+	//std::cout << "reading " << proximityReading << std::endl;
+}
+void begin2(){
 	/*
 	 * Log states are: 0 for wandering, 1 for going to nest, 2 for going to source, 3 for picking up puck, 4 for depositing puck, 5 for beacon action
 	 */
@@ -686,13 +793,14 @@ if ((!hasPuck && !canSeeSource()) || (hasPuck && !canSeeNest())) {
 }
 
 int main(int argc, char **argv) {
-	ros::init(argc, argv, "main_node");
+	ros::init(argc, argv, "foraging");
 	ros::NodeHandle n;
 	ros::Subscriber coloursSubscriber = n.subscribe("coloursDetected", 1, coloursCb);
 	ros::Subscriber pixySubscriber = n.subscribe("block_data", 1, pixyCb);
 	ros::Subscriber aprilTagsSubscriber = n.subscribe("aprilTags", 1, aprilTagsCb);
-	ros::Subscriber proximitySensorsSubscriber = n.subscribe("Sensors", 1, sensorsCb);
-	motorPublisher = n.advertise<std_msgs::String>("wheelSpeeds", 1);
+	ros::Subscriber proximitySensorsSubscriber = n.subscribe("zumo_data", 1, sensorsCb);
+	motorPublisher = n.advertise<geometry_msgs::Twist>("cmd_vel", 1);
+	servoPublisher = n.advertise<std_msgs::Bool>("servo_control", 1);
 	ros::Rate r(10);
 	while(ros::ok()){
 		begin();
