@@ -24,14 +24,8 @@ using namespace std;
 float imgCenterX = 477.0; //370.0; //1288.0;
 float imgCenterY = 259.0; //350.0; //737.0;
 
-/*int rightTurnCheckX1 = 80;
-int rightTurnCheckX2 = 210;
-int rightTurnCheckY = 180;
 
-int leftTurnCheckX1 = 300;
-int leftTurnCheckX2 = 430;
-int leftTurnCheckY = 185;
-*/
+
 int moveForwardsCheckX11 = 672;
 int moveForwardsCheckX12 = 695;
 int moveForwardsCheckY11 = 160;
@@ -48,12 +42,12 @@ int moveForwardsCheckY31 = 330;
 int moveForwardsCheckY32 = 368;
 
 int turnLeftCheckX1 = 435;
-int turnLeftCheckX2 = 695;
+int turnLeftCheckX2 = 630;
 int turnLeftCheckY1 = 110;
 int turnLeftCheckY2 = 128;
 
 int turnRightCheckX1 = 435;
-int turnRightCheckX2 = 695;
+int turnRightCheckX2 = 630;
 int turnRightCheckY1 = 438;
 int turnRightCheckY2 = 450;
 
@@ -83,25 +77,27 @@ colour_detector::ColourDetectionArray getDetectedColours(const cv_bridge::CvImag
 		canTurnRight = true;
 		canTurnLeft = true;
 		canMoveForwards = true;
-		/*for (int i = rightTurnCheckX1; i < rightTurnCheckX2 + 1; i++) {
-			for (int j = 180; j < threshold.rows; j++) {
+		for (int i = turnRightCheckX1; i <= turnRightCheckX2 ; i++) {
+			for (int j = turnRightCheckY1; j < turnRightCheckY2; j++) {
 				if (threshold.at<bool>(j, i) == 255) {
 					canTurnRight = false;
+					//std::cout << "Can't move right at x: " << i << " y: " << j << std::endl;
 				}
 			}
 		}
-		for (int i = leftTurnCheckX1; i < leftTurnCheckX2 + 1; i++) {
-			for (int j = leftTurnCheckY; j < threshold.rows; j++) {
+		for (int i = turnLeftCheckX1; i <= turnLeftCheckX2 ; i++) {
+			for (int j = turnLeftCheckY1; j < turnLeftCheckY2; j++) {
 				if (threshold.at<bool>(j, i) == 255) {
 					canTurnLeft = false;
+					//std::cout << "Can't move left at x: " << i << " y: " << j << std::endl;
 				}
 			}
-		}*/
+		}
 		for (int i = moveForwardsCheckX11; i < moveForwardsCheckX12 + 1; i++) {
 			for (int j = moveForwardsCheckY11; j < moveForwardsCheckY12; j++) {
 				if (threshold.at<bool>(j, i) == 255) {
 					canMoveForwards = false;
-					//std::cout << "black in first" << std::endl;
+					//std::cout << "Can't move forwards at x: " << i << " y: " << j << std::endl;
 				}
 			}
 		}
@@ -110,7 +106,8 @@ colour_detector::ColourDetectionArray getDetectedColours(const cv_bridge::CvImag
 			for (int j = moveForwardsCheckY21; j < moveForwardsCheckY22; j++) {
 				if (threshold.at<bool>(j, i) == 255) {
 					canMoveForwards = false;
-					//std::cout << "black in second" << std::endl;
+					canTurnLeft = false;
+					//std::cout << "Can't move forwards or left at x: " << i << " y: " << j << std::endl;
 				}
 			}
 		}
@@ -118,20 +115,28 @@ colour_detector::ColourDetectionArray getDetectedColours(const cv_bridge::CvImag
 		for (int i = moveForwardsCheckX31; i < moveForwardsCheckX32 + 1; i++) {
 			for (int j = moveForwardsCheckY31; j < moveForwardsCheckY32; j++) {
 				if (threshold.at<bool>(j, i) == 255) {
-					//std::cout << "black in third" << std::endl;
 					canMoveForwards = false;
+					canTurnRight = false;
+					//std::cout << "Can't move forwards or right at x: " << i << " y: " << j << std::endl;
 				}
 			}
 		}
-		if(canMoveForwards){
-			std::cout << "can move forwards" << std::endl;
-		}else{
-			std::cout << "can NOT move forwards" << std::endl;
+		/*if(canMoveForwards){
+			std::cout << "CAN move forwards" << std::endl;
 		}
+		if(canTurnRight){
+			std::cout << "CAN turn right" << std::endl;
+		}
+		if(canTurnLeft){
+			std::cout << "CAN turn left" << std::endl;
+		}*//*//else{
+		//	std::cout << "can NOT move forwards" << std::endl;
+		//}
+
+		*/
 		//colour_detector::ColourDetectionArray colourDetectionArray;
-		colourDetectionArray.canMoveForwards = canMoveForwards;
-		colourDetectionArray.canTurnRight = canTurnRight;
-		colourDetectionArray.canTurnLeft = canTurnLeft;
+
+		
 	}else{
 
 
@@ -148,10 +153,6 @@ colour_detector::ColourDetectionArray getDetectedColours(const cv_bridge::CvImag
 	{
 		mu[i] = moments(contours[i], false);
 	}
-	
-	colourDetectionArray.canMoveForwards = canMoveForwards;
-	colourDetectionArray.canTurnRight = canTurnRight;
-	colourDetectionArray.canTurnLeft = canTurnLeft;
 	///  Get the mass centers
 	for (int i = 0; i < contours.size(); i++)
 	{
@@ -184,7 +185,7 @@ void imageCb(const sensor_msgs::ImageConstPtr &image){
 
 	//colour_detector::ColourDetectionArray redDetectionArray = getDetectedColours(cvSegmentationImage, Scalar(0, 50, 50), Scalar(0, 255, 255), "red");
 
-	//colour_detector::ColourDetectionArray greenDetectionArray = getDetectedColours(cvSegmentationImage, Scalar(52, 50, 50), Scalar(57, 255, 255), "green");
+	colour_detector::ColourDetectionArray greenDetectionArray = getDetectedColours(cvSegmentationImage, Scalar(52, 50, 50), Scalar(57, 255, 255), "green");
 	
 	//colour_detector::ColourDetectionArray orangeDetectionArray = getDetectedColours(cvSegmentationImage, Scalar(8, 0, 0), Scalar(14, 255, 255), "orange");	
 	
@@ -197,6 +198,10 @@ void imageCb(const sensor_msgs::ImageConstPtr &image){
 	//colourDetectionArray.detections.insert(colourDetectionArray.detections.end(), orangeDetectionArray.detections.begin(), orangeDetectionArray.detections.end());
 	//colourDetectionArray.detections.insert(colourDetectionArray.detections.end(), mauveDetectionArray.detections.begin(), mauveDetectionArray.detections.end());
 	colourDetectionArray.detections.insert(colourDetectionArray.detections.end(), blackDetectionArray.detections.begin(), blackDetectionArray.detections.end());
+	std::cout << "COLOR CMF: " << canMoveForwards << " CTR: " << canTurnRight << " CTL: " << canTurnLeft << std::endl;	
+	colourDetectionArray.canMoveForwards = canMoveForwards;
+	colourDetectionArray.canTurnRight = canTurnRight;
+	colourDetectionArray.canTurnLeft = canTurnLeft;
 	detections_pub.publish(colourDetectionArray);
 	//detections_pub.publish(redDetectionArray);
 	
