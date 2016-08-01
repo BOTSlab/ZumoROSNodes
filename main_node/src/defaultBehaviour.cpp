@@ -403,25 +403,28 @@ void wander(){
 		switch (wanderDirection) {
 		case 0:
 			if (canTurnLeft) {
+				std::cout << "Wandering Left." << std::endl;
 				turnLeft();
 			} else {
-				//	printf("Can't wander left! Avoiding \n");
+				std::cout << "Can't wander left. Avoiding." << std::endl;
 				avoid();
 			}
 			break;
 		case 1:
 			if (canTurnRight) {
+				std::cout << "Wandering Right." << std::endl;
 				turnRight();
 			} else {
-				//printf("Can't wander right! Avoiding\n");
+				std::cout << "Can't wander right. Avoiding." << std::endl;
 				avoid();
 			}
 			break;
 		default:
 			if (canMoveForwards) {
+				std::cout << "Wandering Forwards." << std::endl;
 				moveForwards();
 			} else {
-				//printf("Can't wander forwards! Avoiding\n");
+				std::cout << "Can't wander forwards. Avoiding." << std::endl;
 				avoid();
 			}
 			break;
@@ -707,6 +710,9 @@ void begin(){
 	//depositPuck();
 
 	//std::cout << "reading " << proximityReading << std::endl;
+	//std::cout << "CMF: " << canMoveForwards << " CTR: " << canTurnRight << " CTL: " << canTurnLeft << std::endl;
+	wander();
+	
 }
 void begin2(){
 	/*
