@@ -1,68 +1,141 @@
 #include <ros/ros.h>
+#include <image_transport/image_transport.h>
+#include <opencv2/highgui/highgui.hpp>
+#include <cv_bridge/cv_bridge.h>
+#include <opencv2/core/core.hpp>
+#include <opencv2/highgui/highgui.hpp>
+#include "opencv2/imgproc/imgproc.hpp"
 #include <iostream>
 #include <stdlib.h>
+#include <opencv/cvwimage.h>
 #include <sstream>
-#include <string>
-#include <std_msgs/Bool.h>
-#include <std_msgs/String.h>
-#include <geometry_msgs/Twist.h>
-#include <colour_detector/ColourDetection.h>
-#include <colour_detector/ColourDetectionArray.h>
-#include <apriltags_ros/AprilTagDetection.h>
-#include <apriltags_ros/AprilTagDetectionArray.h>
-#include <tf/transform_broadcaster.h>
-#include <pixy_node/PixyData.h>
-#include <pixy_node/PixyBlock.h>
-#include <pixy_node/Servo.h>
-#include <bupimo_msgs/ZumoData.h>
+#include <zbar.h>
+#include "std_msgs/String.h"
+#include <math.h>
 #include <fstream>
 #include <ctime>
+// Include for V-REP
+#include "../include/v_repConst.h"
+// Used data structures:
+#include "vrep_common/VrepInfo.h"
+#include "vrep_common/JointSetStateData.h"
+#include "vrep_common/VisionSensorData.h"
+
+// Used API services:
+#include "vrep_common/simRosEnablePublisher.h"
+#include "vrep_common/simRosEnableSubscriber.h"
+#include "vrep_common/simRosAuxiliaryConsolePrint.h"
+#include "vrep_common/simRosAddStatusbarMessage.h"
+#include "vrep_common/simRosAuxiliaryConsoleOpen.h"
+#include "vrep_common/simRosAuxiliaryConsoleShow.h"
+
+#include "apriltags/AprilTags/TagDetector.h"
+#include "apriltags/AprilTags/Tag36h11.h"
+#include "apriltags/AprilTags/Tag16h5.h"
+#include "AprilTag.h"
+#include "DetectedColour.h"
+#include "Robot.h"
+
+using namespace cv;
 using namespace std;
+using namespace zbar;
 
-ros::Publisher motorPublisher;
-ros::Publisher servoPublisher;
+const double PI = 3.14159265358979323846;
+const double TWOPI = 2.0 * PI;
+AprilTags::TagDetector* tag_detector;
+AprilTags::TagCodes tag_codes(AprilTags::tagCodes16h5);
 
+double camera_focal_length_x(700); // in pixels. late 2013 macbookpro retina = 700
+double camera_focal_length_y(700); // in pixels
+double tag_size(0.029); // tag side length of frame in meters
+
+ros::Publisher barcodeLocationPublisher;
+ros::Publisher colourLocationPublisher;
+ros::Publisher motorSpeedPub;
+int leftMotorHandle;
+int rightMotorHandle;
+int frontVisionSensor;
+string robotID;
+int nodeID;
+// Global variables (modified by topic subscribers):
+bool simulationRunning = true;
+float simulationTime = 0.0f;
 
 int state = 0;
 int subState = 0;
+vector<DetectedColour> detectedBlueColours, detectedRedColours,
+		detectedPurpleColours, detectedYellowColours, detectedGreenColours,
+		detectedCyanColours, detectedBeacons;
 
+vector<AprilTag> tagsFound;
+vector<Robot> neighbors;
 int factor = 2;
-int proximityReading = 12;
-int puckYCoor = 0;//////////////////////////
-int puckXLCoor = 0;
-int puckXRCoor = 0;
 
-string beaconPriorities [3] = {"0","1","2"};
+int puckYCoor = 245; //////////////////////////
+int puckXLCoor = 245;
+int puckXRCoor = 265;
 
-bool turnedLeft = false;
-bool turnedRight = false;
+int yellowYCoor = 80;
+int yellowLCoor = 220;
+int yellowRCoor = 295;
 
-std::vector<colour_detector::ColourDetection> detectedColours;
-std::vector<colour_detector::ColourDetection> blueColours;
-std::vector<colour_detector::ColourDetection> orangeColours;
-std::vector<colour_detector::ColourDetection> greenColours;
-std::vector<pixy_node::PixyBlock> pixyBlocks;
-std::vector<apriltags_ros::AprilTagDetection> detectedTags;
+int robotPositionInImgX = 256;
+int robotPositionInImgY = 256;
 
-bool canTurnRight = true;
-bool canTurnLeft = true;
-bool canMoveForwards = true;
+int rightTurnCheckX1 = 80;
+int rightTurnCheckX2 = 210;
+int rightTurnCheckY = 180;
+
+int leftTurnCheckX1 = 300;
+int leftTurnCheckX2 = 430;
+int leftTurnCheckY = 185;
+
+int moveForwardsCheckX1 = 200;
+int moveForwardsCheckX2 = 310;
+int moveForwardsCheckY = 190;
+
+int aheadX1 = 240;
+int aheadX2 = 265;
 
 int wanderCounterDefault = 3;
 int wanderCounter = wanderCounterDefault;
 int wanderDirection = 0;
 
-int pixyGreenSignature = 2;
-
+bool canTurnRight = true;
+bool canTurnLeft = true;
+bool canMoveForwards = true;
 bool hasPuck = false;
-bool openedServo = false;
 
 ofstream simulationLog;
-string simulationNumber = "2";
-string simulationHSINumber = "7";  //REMEMBER to update the same variable in beaconControl.cpp!!!!
+string simulationNumber = "15";
+string simulationHSINumber = "8";  //REMEMBER to update the same variable in beaconControl.cpp!!!!
 int logState = -1;
 
-/****************** LOGGING ******************/
+//set beacon priorities according to passed id in input by the lua script and nN
+int beaconPriority;
+// Topic subscriber callbacks:
+inline double standardRad(double t) {
+	if (t >= 0.) {
+		t = fmod(t + PI, TWOPI) - PI;
+	} else {
+		t = fmod(t - PI, -TWOPI) + PI;
+	}
+	return t;
+}
+/**
+ * Convert rotation matrix to Euler angles
+ */
+
+void wRo_to_euler(const Eigen::Matrix3d& wRo, double& yaw, double& pitch,
+		double& roll) {
+	yaw = standardRad(atan2(wRo(1, 0), wRo(0, 0)));
+	double c = cos(yaw);
+	double s = sin(yaw);
+	pitch = standardRad((-wRo(2, 0), wRo(0, 0) * c + wRo(1, 0) * s));
+	roll = standardRad(
+			atan2(wRo(0, 2) * s - wRo(1, 2) * c,
+					-wRo(0, 1) * s + wRo(1, 1) * c));
+}
 
 // Get current date/time, format is YYYY-MM-DD.HH:mm:ss
 const std::string currentDateTime() {
@@ -84,305 +157,332 @@ void writeToLog(string msg) {
 	simulationLog << "\n";
 }
 
-/****************** Issuing Movement Commands To Motors and Servo ******************/
+AprilTag convertToAprilTag(AprilTags::TagDetection& detection, int width,
+		int height) {
+	// recovering the relative pose of a tag:
 
-void publishMotorSpeed(string wheelSpeed) {
-	geometry_msgs::Twist msg;
-	if(wheelSpeed == "F"){
-		msg.linear.x = 0.1;
+	// NOTE: for this to be accurate, it is necessary to use the
+	// actual camera parameters here as well as the actual tag size
+	// (m_fx, m_fy, m_px, m_py, m_tagSize)
+
+	Eigen::Vector3d translation;
+	Eigen::Matrix3d rotation;
+	detection.getRelativeTranslationRotation(tag_size, camera_focal_length_x,
+			camera_focal_length_y, width / 2, height / 2, translation,
+			rotation);
+
+	Eigen::Matrix3d F;
+	F << 1, 0, 0, 0, -1, 0, 0, 0, 1;
+	Eigen::Matrix3d fixed_rot = F * rotation;
+	double yaw, pitch, roll;
+	wRo_to_euler(fixed_rot, yaw, pitch, roll);
+
+	AprilTag tag;
+
+	tag.id = detection.id;
+	tag.hammingDistance = detection.hammingDistance;
+	tag.distance = translation.norm() * 100.0;
+	tag.z = translation(0) * 100.0; // depth from camera
+	tag.x = translation(1) * 100.0; // horizontal displacement (camera pov right = +ve)
+	tag.y = translation(2) * 100.0; // vertical displacement
+	tag.yaw = yaw;
+	tag.pitch = pitch;
+	tag.roll = roll;
+	tag.code = detection.code;
+	return tag;
+}
+void infoCallback(const vrep_common::VrepInfo::ConstPtr& info) {
+	simulationTime = info->simulationTime.data;
+	simulationRunning = (info->simulatorState.data & 1) != 0;
+}
+
+void RequestPublisher(ros::NodeHandle node, string topicName, int queueSize,
+		int streamCmd, int objectHandle) {
+
+	ros::ServiceClient enablePublisherClient = node.serviceClient<
+			vrep_common::simRosEnablePublisher>("/vrep/simRosEnablePublisher");
+
+	vrep_common::simRosEnablePublisher publisherRequest;
+
+	publisherRequest.request.topicName = topicName;
+	publisherRequest.request.queueSize = queueSize;
+	publisherRequest.request.streamCmd = streamCmd;
+	publisherRequest.request.auxInt1 = objectHandle;
+
+	enablePublisherClient.call(publisherRequest);
+
+	printf("A publisher just started with topic name %s\n", topicName.c_str());
+}
+
+void RequestSubscriber(ros::NodeHandle node, string topicName, int queueSize,
+		int streamCmd) {
+
+	ros::ServiceClient enableSubscriberClient = node.serviceClient<
+			vrep_common::simRosEnableSubscriber>(
+			"/vrep/simRosEnableSubscriber");
+
+	vrep_common::simRosEnableSubscriber subscriberRequest;
+
+	subscriberRequest.request.topicName = topicName;
+	subscriberRequest.request.queueSize = 1;
+	subscriberRequest.request.streamCmd = streamCmd;
+
+	enableSubscriberClient.call(subscriberRequest);
+	printf("A subscriber just started with topic name %s\n", topicName.c_str());
+}
+
+//Scalar(100,50,50), Scalar(130,255,255) || Scalar(120,100,100), Scalar(179,255,255) -> blue
+//Scalar(0, 50, 50), Scalar(0, 255, 255) -> red
+//Scalar(50, 100, 100), Scalar(70, 255, 255) -> green
+
+vector<DetectedColour> getDetectedColours(
+		const cv_bridge::CvImageConstPtr &cvSegmentationImage,
+		Scalar lowerBound, Scalar higherBound, string colour) {
+
+	Mat HSV;
+	cvtColor(cvSegmentationImage->image, HSV, COLOR_BGR2HSV);
+	vector<DetectedColour> detectedColours;
+	Mat threshold;
+	inRange(HSV, lowerBound, higherBound, threshold);
+	/*
+	 * Attempt to detect obstacles here because the image is already on-hand
+	 * Seperate this into other methods later to clean the code up
+	 */
+
+	if (colour == "blue" /*|| colour == "cyan" || colour == "green"*/) {
+		canTurnRight = true;
+		canTurnLeft = true;
+		canMoveForwards = true;
+		for (int i = rightTurnCheckX1; i < rightTurnCheckX2 + 1; i++) {
+			for (int j = 180; j < threshold.rows; j++) {
+				if (threshold.at<bool>(j, i) == 255) {
+					canTurnRight = false;
+				}
+			}
+		}
+		for (int i = leftTurnCheckX1; i < leftTurnCheckX2 + 1; i++) {
+			for (int j = leftTurnCheckY; j < threshold.rows; j++) {
+				if (threshold.at<bool>(j, i) == 255) {
+					canTurnLeft = false;
+				}
+			}
+		}
+		for (int i = moveForwardsCheckX1; i < moveForwardsCheckX2 + 1; i++) {
+			for (int j = moveForwardsCheckY; j < threshold.rows; j++) {
+				if (threshold.at<bool>(j, i) == 255) {
+					canMoveForwards = false;
+				}
+			}
+		}
 	}
-	if(wheelSpeed == "R"){
-		msg.linear.x = 0.0;
-		msg.angular.z = -1.0;
+
+	if (colour == "red") {
+		hasPuck = false;
+		int farPuckYCoor = 235;
+		for (int i = puckXLCoor; i < puckXRCoor + 1; i++) {
+			for (int j = puckYCoor; j < threshold.rows; j++) {
+				if (threshold.at<bool>(j, i) == 255) {
+					hasPuck = true;
+				}
+			}
+			for (int j = farPuckYCoor; j < puckYCoor - 1; j++) {
+				if (threshold.at<bool>(j, i) == 255) {
+					hasPuck = false;
+				}
+			}
+
+		}
+
 	}
-	if(wheelSpeed == "E"){
-		msg.linear.x = 0.0;
-		msg.angular.z = -0.5;
+
+	vector < vector<Point> > contours;
+
+	vector < Vec4i > hierarchy;
+	findContours(threshold, contours, hierarchy, CV_RETR_TREE,
+			CV_CHAIN_APPROX_SIMPLE, Point(0, 0));
+
+	// Get the moments
+	// mu[i].m00 represents how big the blob of color is
+	vector < Moments > mu(contours.size());
+
+	for (int i = 0; i < contours.size(); i++) {
+		mu[i] = moments(contours[i], false);
 	}
-	if(wheelSpeed == "L"){
-		msg.linear.x = 0.0;
-		msg.angular.z = 1.0;
+	//std::string foundBlobs = "";
+	///  Get the mass centers
+	for (int i = 0; i < contours.size(); i++) {
+		DetectedColour dc;
+		dc.colour = colour;
+		dc.colourBlobSize = (int) mu[i].m00;
+		dc.x = (int) mu[i].m10 / mu[i].m00;
+		dc.y = (int) mu[i].m01 / mu[i].m00;
+		if (dc.x >= 0 && dc.y >= 0) {
+			detectedColours.push_back(dc);
+		}
+
 	}
-	if(wheelSpeed == "K"){	
-		msg.linear.x = 0.0;
-		msg.angular.z = 0.5;
+	return detectedColours;
+}
+
+vector<AprilTag> getDetectedTags(cv_bridge::CvImagePtr &cv_ptr) {
+	cv::Mat image_gray;
+	cv::cvtColor(cv_ptr->image, image_gray, CV_BGR2GRAY);
+	vector<AprilTags::TagDetection> detections = tag_detector->extractTags(
+			image_gray);
+	vector < AprilTag > tagsFound;
+	for (int i = 0; i < detections.size(); i++) {
+		detections[i].draw(cv_ptr->image);
+		tagsFound.push_back(
+				convertToAprilTag(detections[i], cv_ptr->image.cols,
+						cv_ptr->image.rows));
 	}
-	if(wheelSpeed == "S"){	
-		msg.linear.x = 0.0;
-		msg.angular.z = 0.0;
+	return tagsFound;
+}
+void publishMotorSpeed(float leftMotorSpeed, float rightMotorSpeed) {
+	vrep_common::JointSetStateData motorSpeeds;
+	motorSpeeds.handles.data.push_back(leftMotorHandle);
+	motorSpeeds.handles.data.push_back(rightMotorHandle);
+	motorSpeeds.setModes.data.push_back(2); // 2 is the speed mode
+	motorSpeeds.setModes.data.push_back(2);
+	motorSpeeds.values.data.push_back(leftMotorSpeed);
+	motorSpeeds.values.data.push_back(rightMotorSpeed);
+	motorSpeedPub.publish(motorSpeeds);
+}
+
+int getDistance(int x1, int y1, int x2, int y2) {
+	return sqrt(pow((x1 - x2), 2) + pow((y1 - y2), 2));
+}
+//only one beacon per color allowed so far
+bool canSeeRed() {
+	if (detectedRedColours.size() > 0) {
+		return true;
 	}
-	if(wheelSpeed == "B"){	
-		msg.linear.x = -0.1;
-		msg.angular.z = 0.0;
+	return false;
+}
+bool canSeePurple() {
+	if (detectedPurpleColours.size() > 0
+			&& detectedPurpleColours[0].colourBlobSize > 5) {
+		return true;
 	}
-	motorPublisher.publish(msg);
+	return false;
+}
+bool canSeeYellow() {
+	if (detectedYellowColours.size() > 0
+			&& detectedYellowColours[0].colourBlobSize > 5) {
+		return true;
+	}
+	return false;
+}
+bool canSeeBlue() {
+	if (detectedBlueColours.size() > 0) {
+		return true;
+	}
+	return false;
+}
+bool canSeeGreen() {
+	if (detectedGreenColours.size() > 0) {
+		return true;
+	}
+	return false;
+}
+bool canSeeCyan() {
+	if (detectedCyanColours.size() > 0) {
+		return true;
+	}
+	return false;
+}
+//should be always paired with canSeeBlue
+void getClosestBlue(int &nearestBlueX, int &nearestBlueY) {
+	nearestBlueY = 0;
+	for (uint i = 0; i < detectedBlueColours.size(); i++) {
+		if (detectedBlueColours[i].y > nearestBlueY) {
+			nearestBlueX = detectedBlueColours[i].x;
+			nearestBlueY = detectedBlueColours[i].y;
+		}
+	}
+}
+
+bool atDestination(int destY) {
+	if (destY >= 145) {
+		return true;
+	}
+	return false;
+}
+bool destinationIsAhead(int destX) {
+	if (destX <= aheadX2 && destX >= aheadX1) {
+		return true;
+	}
+	return false;
+}
+bool destinationIsRight(int destX) {
+	if (destX < aheadX1) {
+		return true;
+	}
+	return false;
+}
+bool destinationIsLeft(int destX) {
+	if (destX > aheadX2) {
+		return true;
+	}
+	return false;
 }
 
 void moveForwards() {
-	publishMotorSpeed("F");
+	//publishMotorSpeed(3.1415, 3.1415);
+	publishMotorSpeed(10.0, 10.0);
+}
+void moveBackwards() {
+	publishMotorSpeed(-3.1415, -3.1415);
+}
+void moveForwardsAccelerated() {
+	publishMotorSpeed(3.1415 * 2, 3.1415 * 2);
+}
+void moveForwardsSlowed() {
+	publishMotorSpeed(3.1415 / 2, 3.1415 / 2);
 }
 void turnRight() {
-	publishMotorSpeed("R");
+	publishMotorSpeed(3.1415, 0.0);
 }
-void turnRightSlow() {
-	publishMotorSpeed("E");
+void turnRightAvoid() {
+	publishMotorSpeed(3.1415, -2.0);
+}
+void turnRightAccelerated() {
+	publishMotorSpeed(3.1415 * 2, 0.0);
+}
+void turnRightSlowed() {
+	publishMotorSpeed(3.1415 / 2, 0.0);
+
 }
 void turnLeft() {
-	publishMotorSpeed("L");
-
+	publishMotorSpeed(0.0, 3.1415);
 }
-void turnLeftSlow() {
-	publishMotorSpeed("K");
+void turnLeftAvoid() {
+	publishMotorSpeed(-2.0, 3.1415);
+}
 
+void turnLeftAccelerated() {
+	publishMotorSpeed(0.0, 3.1415 * 2);
+}
+void turnLeftSlowed() {
+	publishMotorSpeed(0.0, 3.1415 / 2);
 }
 void stop() {
-	publishMotorSpeed("S");
+	//printf("stopping\n");
+	publishMotorSpeed(0.0, 0.0);
 }
-
-void moveBackwards(){
-	publishMotorSpeed("B");
-}
-
-void closeServo(){
-	std_msgs::Bool msg;
-	msg.data = 0;
-	servoPublisher.publish(msg);
-	
-}
-
-void openServo(){
-	std_msgs::Bool msg;
-	msg.data = 1;
-	servoPublisher.publish(msg);
-	
-}
-
-/****************** Colour Detections ******************/
-/*
-	For each robot adjust pixy signatures
-*/
-
-bool pixyCanSeeGreen(){
-	for(int i=0; i<pixyBlocks.size(); i++){
-		if(pixyBlocks[i].signature == 1){
-			return true;
-		}
-	}
-	return false;
-}
-
-bool piCamCanSeeGreen(){
-	if(greenColours.size()>0){
-		return true;
-	}
-}
-
-bool canSeeGreen() {
-	if(piCamCanSeeGreen()){
-		return true;
-	}
-	if(pixyCanSeeGreen()){
-		return true;
-	}
-	return false;
-}
-
-bool pixyCanSeeOrange(){
-	for(int i=0; i<pixyBlocks.size(); i++){
-		if(pixyBlocks[i].signature == 2){
-			return true;
-		}
-	}
-	return false;
-}
-
-bool piCamCanSeeOrange(){
-	if(orangeColours.size()>0){
-		return true;
-	}
-}
-
-bool canSeeOrange() {
-	if(piCamCanSeeOrange()){
-		return true;
-	}
-	if(pixyCanSeeOrange()){
-		return true;
-	}
-	return false;
-}
-
-bool pixyCanSeeBlue(){
-	for(int i=0; i<pixyBlocks.size(); i++){
-		if(pixyBlocks[i].signature == 2){
-			return true;
-		}
-	}
-	return false;
-}
-
-bool piCamCanSeeBlue(){
-	if(blueColours.size()>0){
-		return true;
-	}
-}
-
-// green is 0, orange is 1? for now
-bool canSeeBlue() {
-	if(pixyCanSeeBlue()){
-		return true;
-	}
-	if(piCamCanSeeBlue()){
-		return true;
-	}
-	return false;
-}
-
-/****************** Landmark Detections ******************/
-/*
-	For each robot adjust detection distances
-*/
-
-bool canSeeNest() {
-	/*for(int i=0; i<detectedTags.size(); i++){
-		if(detectedTags[i].id == 0){
-			return true;
-		}
-	}*/
-/*
-	for(int i=0; i<detectedTags.size(); i++){
-		if(detectedTags[i].id == 0 && detectedTags[i].distance > 170){ //edit
-			return true;
-		}
-	}//if assigned an extra colour then use that too
-*/	return false;
-}
-
-
-//range is limited so just seeing the tag means the robot is where it needs to be?
-bool atNest(){
-	/*for(int i=0; i<detectedTags.size(); i++){
-		if(detectedTags[i].id == 0 && detectedTags[i].distance <= 170){
-			return true;
-		}
-	}*/
-	return false;
-}
-
-
-bool canSeeSource() {
-	for(int i=0; i<detectedTags.size(); i++){
-		if(detectedTags[i].id == 1 && detectedTags[i].distance > 170){
-			return true;
-		}
-	}
-	return false;
-}
-
-bool atSource(){
-	for(int i=0; i<detectedTags.size(); i++){
-		if(detectedTags[i].id == 1 && detectedTags[i].distance <= 170){
-			return true;
-		}
-	}
-	return false;
-}
-
-
-bool atOrangeDestination() { //update values
-	for(int i=0; i<orangeColours.size();i++){
-		if(orangeColours[i].distance < 170){
-			return true;
-		}
-	}
-	return false;
-}
-
-bool atGreenDestination() { //update values
-	for(int i=0; i<greenColours.size();i++){
-		if(greenColours[i].distance < 170){
-			return true;
-		}
-	}
-	return false;
-}
-
-bool canSeeBeacon(){
-	if(canSeeOrange()){
-		return true;
-	}
-	return false;
-}
-
-/****************** Target Locations ******************/
-/*
-	For each robot adjust detection distances and bearings
-*/
-
-bool destinationIsAhead(int bearing) {
-	if (bearing <= 30 && bearing >= -35) {
-		return true;
-	}
-	return false;
-}
-
-bool destinationIsAheadPixy(int x_offset){
-	if (x_offset <= 190 && x_offset >= 110) {
-		return true;
-	}
-	return false;
-}
-
-bool destinationIsRight(int bearing) {
-	if (bearing > 30) {
-		return true;
-	}
-	return false;
-}
-bool destinationIsRightPixy(int x_offset) {
-	if (x_offset > 190) {
-		return true;
-	}
-	return false;
-}
-bool destinationIsLeft(int bearing) {
-	if (bearing < -35.0) {
-		return true;
-	}
-	return false;
-}
-bool destinationIsLeftPixy(int x_offset) {
-	if (x_offset < 110) {
-		return true;
-	}
-	return false;
-}
-
-
-
-
-/*bool hasPuck(){
-	if(proximityReading == 12){
-		return false;
-	}
-	return true;
-}*/
-
-/****************** Movement Functions ******************/
-
 void avoid() {
-if (canTurnRight) {
-		turnRight();
+	if (canTurnRight) {
+		turnRightAvoid();
 		//printf("Avoiding Right...");
 	} else {
 		if (canTurnLeft) {
-			turnLeft();
+			turnLeftAvoid();
 			//printf("Avoiding Forwards...");
 		} else {
 			if (canMoveForwards) {
 				moveForwards();
 				//printf("Avoiding Left...");
-			}
+			}//EXPERIMENTAL!!!
 			else{
 				if(hasPuck){
 					stop();
@@ -392,39 +492,75 @@ if (canTurnRight) {
 			}
 		}
 	}
-	//ros::Duration(1.0).sleep();
 
 }
 
-void wander(){
-// ToDo: collision detection when wandering
+void moveTo(int destX, int destY) {
+	//printf("moving to destX: %d destY: %d\n", destX, destY);
+
+	if (destinationIsAhead(destX)) {
+		//printf("Destination is ahead...\n");
+		if (canMoveForwards) {
+			moveForwards();
+		} else {
+
+			//printf("Can't move forwards! Avoiding...\n");
+			avoid();
+		}
+		return;
+	}
+
+	if (destinationIsRight(destX)) {
+		//printf("Destination is right...\n");
+		if (canTurnRight) {
+			//printf("Turning RIGHT\n");
+			turnRight();
+		} else {
+			//printf("Can't move right! Avoiding...\n");
+			avoid();
+		}
+		return;
+	}
+	if (destinationIsLeft(destX)) {
+		//printf("Destination is left...\n");
+		if (canTurnLeft) {
+			//printf("Turning LEFT\n");
+			turnLeft();
+		} else {
+			//printf("Can't move left! Avoiding...\n");
+			avoid();
+		}
+
+	}
+
+}
+
+void wander() {
+	// ToDo: collision detection when wandering
 	if (wanderCounter > 0) {
 		wanderCounter--;
 		switch (wanderDirection) {
 		case 0:
 			if (canTurnLeft) {
-				std::cout << "Wandering Left." << std::endl;
 				turnLeft();
 			} else {
-				std::cout << "Can't wander left. Avoiding." << std::endl;
+				//	printf("Can't wander left! Avoiding \n");
 				avoid();
 			}
 			break;
 		case 1:
 			if (canTurnRight) {
-				std::cout << "Wandering Right." << std::endl;
 				turnRight();
 			} else {
-				std::cout << "Can't wander right. Avoiding." << std::endl;
+				//printf("Can't wander right! Avoiding\n");
 				avoid();
 			}
 			break;
 		default:
 			if (canMoveForwards) {
-				std::cout << "Wandering Forwards." << std::endl;
 				moveForwards();
 			} else {
-				std::cout << "Can't wander forwards. Avoiding." << std::endl;
+				//printf("Can't wander forwards! Avoiding\n");
 				avoid();
 			}
 			break;
@@ -436,291 +572,138 @@ void wander(){
 	}
 
 }
-
-void moveToPixy(int x_offset, int y_offset) {
-	
-	if (destinationIsAheadPixy(x_offset) && y_offset > 190) {
-		std::cout << "picking up puck" << std::endl;
-		moveForwards();
-		ros::Duration(2.0).sleep();
-		return;
-	}
-	if (destinationIsAheadPixy(x_offset)) {
-		std::cout << "destination IS ahead" << std::endl;
-		if (canMoveForwards) {
-			moveForwards();
-		} else {
-			//avoidCounter = 5;
-			avoid();
-		}
-		return;
-	}
-
-	if (destinationIsRightPixy(x_offset)) {
-		//if (canTurnRight) {
-			std::cout << "NOT ahead, turning right" << std::endl;
-			turnRightSlow();
-		//} else {
-		//	avoidCounter = 5;
-		//	avoid();
-		//}
-		return;
-	}
-	if (destinationIsLeftPixy(x_offset)) {
-		//if (canTurnLeft) {
-			std::cout << "NOT ahead, turning left" << std::endl;
-			turnLeftSlow();
-		//} else {
-		//	avoidCounter = 5;
-		//	avoid();
-		//}
-
-	}
-
+bool canSeeBothBeacons() {
+	return canSeeCyan() && canSeeGreen();
 }
-void moveTo(int distance, int bearing) {
-
-	if (destinationIsAhead(bearing)) {
-		std::cout << "destination IS ahead" << std::endl;
-		if (canMoveForwards) {
-			moveForwards();
-		} else {
-			//avoidCounter = 5;
-			avoid();
-		}
-		return;
-	}
-
-	if (destinationIsRight(bearing)) {
-	//	if (canTurnRight) {
-		std::cout << "bearing is " << bearing << " turning right" << std::endl;
-		turnRight();
-	//	} else {
-	//		avoidCounter = 5;
-	//		avoid();
-	//	}
-		return;
-	}
-	if (destinationIsLeft(bearing)) {
-		//if (canTurnLeft) {
-			std::cout << "bearing is " << bearing << " turning left" << std::endl;
-			turnLeft();
-		//} else {
-		//	avoidCounter = 5;
-		//	avoid();
-		//}
-
-	}
-
+bool canSeeCyanBeacon() {
+	return canSeeCyan();
 }
-
-/****************** GoTo Functions ******************/
-
-void goToNest() {
-	/*if (canSeeYellow()) {
-		moveTo(detectedYellowColours[0].x, detectedYellowColours[0].y);
-	}*/
-	/*	for(int i=0; i<detectedTags.size(); i++){
-		if(detectedTags[i].id == 0){
-			moveTo(detectedTags[i].distance, detectedTags[i].bearing);
-		}
-	}*/
+bool canSeeGreenBeacon() {
+	return canSeeGreen();
 }
-
-void goToSource() {
-	/*	for(int i=0; i<detectedTags.size(); i++){
-		if(detectedTags[i].id == 1){
-			moveTo(detectedTags[i].distance, detectedTags[i].bearing);
-		}
-	}*/
-}
-
-/****************** Puck Functions ******************/
-/*
-	For each robot adjust detection distances and bearings
-*/
-
-bool pixyCanSeePuck(){
-	for (int i=0; i<pixyBlocks.size(); i++){
-		if(pixyBlocks[i].signature == pixyGreenSignature){
+bool atSource() {
+	if (canSeePurple()) {
+		if (detectedPurpleColours[0].y >= 130) {
 			return true;
+		} else {
+			return false;
 		}
-	}
-	return false;
-}
-
-bool piCamCanSeePuck(){
-	if(greenColours.size()>0){
-		return true;
-	}else{
+	} else {
 		return false;
 	}
-}
 
+}
+void goToSource() {
+	if (canSeePurple()) {
+		moveTo(detectedPurpleColours[0].x, detectedPurpleColours[0].y);
+	}
+}
+void goToNest() {
+	if (canSeeYellow()) {
+		moveTo(detectedYellowColours[0].x, detectedYellowColours[0].y);
+	}
+}
+void goToCyanBeacon() {
+	if (canSeeCyan()) {
+		moveTo(detectedCyanColours[0].x, detectedCyanColours[0].y);
+	}
+}
+void goToGreenBeacon() {
+	if (canSeeGreen()) {
+		moveTo(detectedGreenColours[0].x, detectedGreenColours[0].y);
+	}
+}
 bool canSeePuck() {
-	if(piCamCanSeePuck() || pixyCanSeePuck()){
-		return true;
-	}else{
-		return false;
-	}
+	return canSeeRed();
 }
 
-void pickUpPuck(){
-// TODO: add signature to differentiate pucks from others
-	if(!openedServo){
-		openedServo = true;
-		ros::Duration(1.0).sleep();
-		openServo();
-	}
+bool canSeeNest() {
+	return canSeeYellow();
+}
+bool canSeeSource() {
+	return canSeePurple();
+}
+bool canSeeAgent() {
+	return canSeeBlue();
+}
+void pickUpPuck() {
+
 	int max = 0;
 	int maxX = 0;
-	if(proximityReading < 12){
-		hasPuck = true;
-		closeServo();
-		openedServo = false;
-		
-	}else{
-		for (int i=0; i<pixyBlocks.size(); i++){
-			if(pixyBlocks[i].signature == pixyGreenSignature){
-				if(pixyBlocks[i].roi.x_offset > 140 && pixyBlocks[i].roi.x_offset < 200 &&pixyBlocks[i].roi.y_offset > 140){
-					moveForwards();
-				}else{
-					if(pixyBlocks[i].roi.x_offset < 110){
-						turnLeftSlow();
-					}else{
-						if(pixyBlocks[i].roi.x_offset > 190){
-							turnRightSlow();
-						}else{
-							moveForwards();
-						}
-					}
-				}
-				
-			}
-			
+	for (int i = 0; i < detectedRedColours.size(); i++) {
+		if (detectedRedColours[i].y > max) {
+			max = detectedRedColours[i].y;
+			maxX = detectedRedColours[i].x;
 		}
+	}
+	moveTo(maxX, max);
+
+}
+bool atNest() {
+	if (canSeeYellow()) {
+		if (detectedYellowColours[0].y >= 145) {
+			return true;
+		} else {
+			return false;
+		}
+	} else {
+		return false;
 	}
 
 }
-
-void piCamGoToNearestPuck(){
-	int bearing, minDistance;
-	minDistance = 1000;
-	for(int i=0; i<greenColours.size();i++){
-		if(greenColours[i].distance < minDistance){
-			minDistance = greenColours[i].distance;
-			bearing = greenColours[i].bearing;
+bool atGreenBeacon() {
+	if (canSeeGreen()) {
+		if (detectedGreenColours[0].y >= 148) {
+			return true;
+		} else {
+			return false;
 		}
+	} else {
+		return false;
 	}
-	moveTo(minDistance, bearing);
 }
-void depositPuck(){
-//std::cout << "Depositing Puck" << std::endl;
-	if(hasPuck){
-		ros::Duration(1.0).sleep();
-		openServo();
-		ros::Duration(1.0).sleep();
-		moveBackwards();
-		ros::Duration(1.0).sleep();
-		closeServo();
-		std::cout <<"setting to false" << std::endl;
-		hasPuck = false;
+bool atCyanBeacon() {
+	if (canSeeCyan()) {
+		if (detectedCyanColours[0].y >= 148) {
+			return true;
+		} else {
+			return false;
+		}
+	} else {
+		return false;
 	}
-	//avoid();
-	//ros::Duration(1.5).sleep();
+}
+void depositPuck() {
+	//printf("moving backwards");
+	moveBackwards();
+	ros::Duration(1.5).sleep();
+	avoid();
+	ros::Duration(1.5).sleep();
 	return;
 }
-void pixyPickUpPuck(){
-
-	int destX, minDestY;
-	minDestY = 1000;
-	for(int i=0; i<pixyBlocks.size();i++){
-		if(pixyBlocks[i].signature == 1 && pixyBlocks[i].roi.y_offset < minDestY){
-			destX = pixyBlocks[i].roi.x_offset;
-			minDestY = pixyBlocks[i].roi.y_offset;
-		}
-	}
-	moveToPixy(destX, minDestY);
-}
-
-
-/****************** Callback Functions ******************/
-
-void coloursCb(const colour_detector::ColourDetectionArray::ConstPtr& msg){
-
-	detectedColours = msg -> detections;
-	canMoveForwards = msg -> canMoveForwards;
-	canTurnLeft = msg -> canTurnLeft;
-	canTurnRight = msg -> canTurnRight;
-	blueColours.clear();
-	greenColours.clear();
-	orangeColours.clear();
-	for(int i=0; i<detectedColours.size(); i++){
-		if(detectedColours[i].colour == "blue"){
-			blueColours.push_back(detectedColours[i]);
-		}
-		if(detectedColours[i].colour == "green"){
-			greenColours.push_back(detectedColours[i]);
-		}
-		if(detectedColours[i].colour == "orange"){
-			orangeColours.push_back(detectedColours[i]);
-		}
+void abandonPuck() {
+	for (int i = 0; i < 3; i++) {
+		moveBackwards();
 	}
 
-	/*std::cout << blueColours.size() << std::endl;
-	std::cout << greenColours.size() << std::endl;
-	std::cout << orangeColours.size() << std::endl;
-	*/
+}
+void reactToBeacon() {
 
 }
 
-void pixyCb(const pixy_node::PixyData::ConstPtr& msg){
-	pixyBlocks = msg -> blocks;
-}
+// this method is called multiple times per spin
+// setting states and operating on them in another method to take advantage of that
+void begin() {
+	//change source color to indicate depletion
+	//maybe change nest color when experiment is done to have a stopping condition that they all need to go back to this place
+	//printf("beginning\n");
 
-void aprilTagsCb(const apriltags_ros::AprilTagDetectionArray::ConstPtr& msg){
-	detectedTags = msg -> detections;
-}
-
-void sensorsCb(const bupimo_msgs::ZumoData::ConstPtr& msg){
-	proximityReading =  msg -> frontProximity;
-}
-/****************** Main Behaviour Functions ******************/
-void begin(){
-	//pickUpPuck();
-	//std::cout << "Has Puck: " << hasPuck << std::endl;
-	//turnRight();
-	/*std::cout << "Closing servo" << std::endl;
-	closeServo();
-	ros::Duration(3.0).sleep();
-	std::cout << "Opening servo" << std::endl;
-	openServo();
-	ros::Duration(3.0).sleep();*/
-	/*if(!hasPuck){
-		//std::cout << "Picking up puck" << std::endl;
-		pickUpPuck();
-	}else{
-		//std::cout << "Picked up puck, stopping." << std::endl;
-		//std::cout << "Has Puck: " << hasPuck << std::endl;
-		stop();
-		//ros::Duration(3.0).sleep();
-		//depositPuck();
-	}*/
-        //hasPuck = true;
-	//depositPuck();
-
-	//std::cout << "reading " << proximityReading << std::endl;
-	//std::cout << "CMF: " << canMoveForwards << " CTR: " << canTurnRight << " CTL: " << canTurnLeft << std::endl;
-	wander();
-	
-}
-void begin2(){
 	/*
 	 * Log states are: 0 for wandering, 1 for going to nest, 2 for going to source, 3 for picking up puck, 4 for depositing puck, 5 for beacon action
 	 */
-	
+
 	if (hasPuck && atNest()) {
-		//std::cout << "Depositing Puck at nest." << std::endl;
+
 		if (logState != 4) {
 			//printf("depositing puck\n");
 			logState = 4;
@@ -729,45 +712,188 @@ void begin2(){
 		depositPuck();
 		return;
 	}
-
 	if (hasPuck && canSeeNest()) {
 
 		if (logState != 1) {
-			//std::cout << "going to nest\n" << std::endl ;
+			//printf("going to nest\n");
 			logState = 1;
 			writeToLog("Going to Nest");
 		}
-
 		goToNest();
 		return;
 	}
-
 	//changed for can see source to at source
 	if (atSource() && !hasPuck && canSeePuck()) {
 
 		if (logState != 3) {
-			//std::cout >> "Picking up a puck\n" << std::endl;
+			//	printf("Picking up a puck\n");
 			logState = 3;
 			writeToLog("Picking up a Puck");
 		}
 		pickUpPuck();
 		return;
 	}
-
 	// might need to remove this one
 	if (canSeeSource() && !hasPuck) {
 
 		if (logState != 2) {
-			//std::cout >> "Approaching Source\n" << std::endl;
+			//	printf("Approaching Source\n");
 			logState = 2;
 			writeToLog("Going to Source");
 		}
 		goToSource();
 		return;
 	}
+	//priority 0 is for cyan beacon and 1 is for green beacon
+	//this case implies that the robot can see the beacon but not source when no puck and not nest when has puck
+	/*if (canSeeBothBeacons()) {
+	 if (beaconPriority == 0) {
+	 //printf("Going to cyan beacon, can see both\n");
+	 if (logState != 5) {
+	 //	printf("Approaching Source\n");
+	 logState = 5;
+	 writeToLog("Going to Beacon");
+	 }
 
-if ((!hasPuck && !canSeeSource()) || (hasPuck && !canSeeNest())) {
-		//std::cout >> "Wandering...\n" << std::endl;
+	 goToCyanBeacon();
+	 return;
+
+
+	 } else {
+
+	 //printf("Going to green beacon, can see both\n");
+	 if (logState != 5) {
+	 //	printf("Approaching Source\n");
+	 logState = 5;
+	 writeToLog("Going to Beacon");
+	 }
+	 goToGreenBeacon();
+	 return;
+	 }
+
+	 }
+	 if(canSeeCyanBeacon()){
+
+	 //printf("Going to cyan beacon\n");
+	 if (logState != 5) {
+	 //	printf("Approaching Source\n");
+	 logState = 5;
+	 writeToLog("Going to Beacon");
+	 }
+	 goToCyanBeacon();
+	 return;
+
+	 }
+	 if(canSeeGreenBeacon()){
+
+	 //printf("Going to green beacon\n");
+	 if (logState != 5) {
+	 //	printf("Approaching Source\n");
+	 logState = 5;
+	 writeToLog("Going to Beacon");
+	 }
+	 goToGreenBeacon();
+	 return;
+
+	 }*/
+	if (canSeeBothBeacons()) {
+		if (beaconPriority == 0) {
+
+			if (atCyanBeacon()) {
+				if (logState != 0) {
+					logState = 0;
+					if (hasPuck) {
+						writeToLog("Wandering with a Puck");
+					} else {
+						writeToLog("Wandering without a Puck");
+					}
+
+				}
+				wander();
+				return;
+			} else {
+				if (logState != 5) {
+					//	printf("Approaching Source\n");
+					logState = 5;
+					writeToLog("Going to Beacon");
+				}
+
+				goToCyanBeacon();
+				return;
+			}
+
+		} else {
+			if (atGreenBeacon()) {
+				if (logState != 0) {
+					logState = 0;
+					if (hasPuck) {
+						writeToLog("Wandering with a Puck");
+					} else {
+						writeToLog("Wandering without a Puck");
+					}
+
+				}
+				wander();
+				return;
+			} else {
+				if (logState != 5) {
+					//	printf("Approaching Source\n");
+					logState = 5;
+					writeToLog("Going to Beacon");
+				}
+				goToGreenBeacon();
+				return;
+			}
+		}
+	}
+	if (canSeeCyanBeacon()) {
+		if (atCyanBeacon()) {
+			if (logState != 0) {
+				logState = 0;
+				if (hasPuck) {
+					writeToLog("Wandering with a Puck");
+				} else {
+					writeToLog("Wandering without a Puck");
+				}
+
+			}
+			wander();
+			return;
+		} else {
+			if (logState != 5) {
+				//	printf("Approaching Source\n");
+				logState = 5;
+				writeToLog("Going to Beacon");
+			}
+			goToCyanBeacon();
+			return;
+		}
+	}
+	if (canSeeGreenBeacon()) {
+		if (atGreenBeacon()) {
+			if (logState != 0) {
+				logState = 0;
+				if (hasPuck) {
+					writeToLog("Wandering with a Puck");
+				} else {
+					writeToLog("Wandering without a Puck");
+				}
+
+			}
+			wander();
+			return;
+		} else {
+			if (logState != 5) {
+				//	printf("Approaching Source\n");
+				logState = 5;
+				writeToLog("Going to Beacon");
+			}
+			goToGreenBeacon();
+			return;
+		}
+	}
+	if ((!hasPuck && !canSeeSource()) || (hasPuck && !canSeeNest())) {
+		//printf("Wandering...\n");
 		if (logState != 0) {
 			logState = 0;
 			if (hasPuck) {
@@ -784,7 +910,7 @@ if ((!hasPuck && !canSeeSource()) || (hasPuck && !canSeeNest())) {
 	if (atSource() && !hasPuck && !canSeePuck()) {
 
 		if (logState != 0) {
-			//std::cout >> "Can't find pucks at source, wandering!\n" << std::endl;
+			//	printf("Can't find pucks at source, wandering!\n");
 			logState = 0;
 			writeToLog("Wandering without a Puck");
 		}
@@ -792,27 +918,161 @@ if ((!hasPuck && !canSeeSource()) || (hasPuck && !canSeeNest())) {
 		return;
 	}
 
-	//std::cout >> "don't know what to do\n" << std::endl;
+	//printf("don't know what to do\n");
 	stop();
 
+}
+
+void frontImageCallback(const sensor_msgs::ImageConstPtr &image) {
+//	printf("image call back\n");
+	cv_bridge::CvImageConstPtr cv_image, cvSegmentationImage;
+	cv_image = cv_bridge::toCvCopy(image, "mono16");
+	cvSegmentationImage = cv_bridge::toCvCopy(image, "bgr8");
+
+	detectedBlueColours = getDetectedColours(cvSegmentationImage,
+			Scalar(100, 50, 50), Scalar(130, 255, 255), "blue");
+
+	detectedRedColours = getDetectedColours(cvSegmentationImage,
+			Scalar(0, 50, 50), Scalar(0, 255, 255), "red");
+
+	detectedPurpleColours = getDetectedColours(cvSegmentationImage,
+			Scalar(149, 50, 50), Scalar(150, 255, 255), "purple");
+
+	detectedYellowColours = getDetectedColours(cvSegmentationImage,
+			Scalar(30, 50, 50), Scalar(31, 255, 255), "yellow");
+
+	detectedGreenColours = getDetectedColours(cvSegmentationImage,
+			Scalar(60, 50, 50), Scalar(61, 255, 255), "green");
+
+	detectedCyanColours = getDetectedColours(cvSegmentationImage,
+			Scalar(90, 50, 50), Scalar(91, 255, 255), "cyan");
+	/*if(canSeePurple()){
+	 printf("purple x : %d purple y : %d\n", detectedPurpleColours[0].x,	detectedPurpleColours[0].y);
+	 }
+	 if(canSeeBlue()){
+	 printf("blue x : %d blue y : %d\n", detectedBlueColours[0].x,	detectedBlueColours[0].y);
+	 }
+
+	 /*printf("can turn right: %d\n", canTurnRight);
+	 printf("can turn left: %d\n", canTurnLeft);
+	 printf("can move forwards: %d\n", canMoveForwards);
+	 printf("at source: %d\n", atSource());
+	 printf("at nest: %d\n", atNest());
+
+	 if(canSeeRed()){
+	 printf("red x : %d red y : %d\n", detectedRedColours[0].x,	detectedRedColours[0].y);
+	 }ros::Duration(1.0).sleep();*/
+	//printf("has puck: %d\n", hasPuck);
+	//printf("can move forwards: %d\n", canMoveForwards);
+	//turnRight();
+	/*if(canSeeCyan()){
+	 printf("Cyan x : %d cyan y : %d\n", detectedCyanColours[0].x, detectedCyanColours[0].y);
+	 }else{
+	 printf("No Cyan found\n");
+	 }*/
+	/*if(canSeePurple()){
+	 printf("purple x : %d purple y : %d\n", detectedPurpleColours[0].x, detectedPurpleColours[0].y);
+	 }else{
+	 printf("No purple found\n");
+	 }*/
+	/*if(canSeeGreen()){
+	 printf("green x : %d green y : %d blobsize: %d\n", detectedGreenColours[0].x, detectedGreenColours[0].y, detectedGreenColours[0].colourBlobSize);
+	 }else{
+	 printf("No Green found\n");
+	 }*/
+	/*if(canSeeYellow()){
+	 printf("yellow x : %d yellow y : %d blobsize: %d\n", detectedYellowColours[0].x,	detectedYellowColours[0].y, detectedYellowColours[0].colourBlobSize);
+	 }else{
+	 printf("No Yellow Found\n");
+	 }*/
 
 }
 
 int main(int argc, char **argv) {
-	ros::init(argc, argv, "foraging");
-	ros::NodeHandle n;
-	ros::Subscriber coloursSubscriber = n.subscribe("coloursDetected", 1, coloursCb);
-	ros::Subscriber pixySubscriber = n.subscribe("block_data", 1, pixyCb);
-	ros::Subscriber aprilTagsSubscriber = n.subscribe("aprilTags", 1, aprilTagsCb);
-	ros::Subscriber proximitySensorsSubscriber = n.subscribe("zumo_data", 1, sensorsCb);
-	motorPublisher = n.advertise<geometry_msgs::Twist>("cmd_vel", 1);
-	servoPublisher = n.advertise<std_msgs::Bool>("servo_control", 1);
+
+	if (argc >= 2) {
+		leftMotorHandle = atoi(argv[1]);
+		rightMotorHandle = atoi(argv[2]);
+		frontVisionSensor = atoi(argv[3]);
+		robotID = argv[4];
+
+	} else {
+		printf(
+				"Indicate following arguments: 'leftMotorHandle rightMotorHandle frontVisionSensor'!\n");
+		sleep(5000);
+		return 0;
+	}
+	int _argc = 0;
+	char** _argv = NULL;
+	std::string nodeName("Robot");
+	nodeName += robotID;
+	ros::init(_argc, _argv, nodeName.c_str());
+
+	if (!ros::master::check())
+		return (0);
+
+	ros::NodeHandle node("~");
+	printf("This rosNode just started with node name %s\n", nodeName.c_str());
+
+	ros::Subscriber subInfo = node.subscribe("/vrep/info", 1, infoCallback);
+
+	barcodeLocationPublisher = node.advertise<std_msgs::String>("barcodeExt",
+			10);
+	colourLocationPublisher = node.advertise<std_msgs::String>("colorsFound",
+			10);
+
+	RequestPublisher(node, "frontVisionSensorData" + robotID, 1,
+			simros_strmcmd_get_vision_sensor_image, frontVisionSensor);
+
+	string frontVisionSensorTopicName("/vrep/frontVisionSensorData");
+	frontVisionSensorTopicName += robotID;
+
+	ros::Subscriber frontVisionSensorSub = node.subscribe(
+			frontVisionSensorTopicName.c_str(), 10, frontImageCallback);
+
+	motorSpeedPub = node.advertise<vrep_common::JointSetStateData>("wheels", 1);
+	RequestSubscriber(node, "/" + nodeName + "/wheels", 1,
+			simros_strmcmd_set_joint_state);
+	tag_detector = new AprilTags::TagDetector(tag_codes);
+
+	/*	while (ros::ok() && simulationRunning) {
+	 //printf("rosSpin\n");
+	 ros::spinOnce();
+	 }*/
 	ros::Rate r(10);
-	while(ros::ok()){
+	string filename =
+			"/home/dalia/My Stuff/College Work/Research/Thesis/Results/OneLane/WithHSI/Simulation";
+	filename += simulationHSINumber;
+	filename += "/";
+	filename += nodeName;
+	simulationLog.open(filename.c_str());
+	writeToLog("Simulation Started");
+	struct timeval tv;
+	unsigned int timeVal = 0;
+	if (gettimeofday(&tv, NULL) == 0)
+		timeVal = (tv.tv_sec * 1000 + tv.tv_usec / 1000) & 0x00ffffff;
+	std::string randNumber(
+			boost::lexical_cast < std::string
+					> (timeVal + int(999999.0f * (rand() / (float) RAND_MAX))));
+	int randomSeed = atoi(randNumber.c_str());
+	srand(randomSeed);
+
+	int robotIntID = atoi(robotID.c_str());
+	if (robotIntID % 2 == 0) {
+		beaconPriority = 0;
+	} else {
+		beaconPriority = 1;
+	}
+	while (ros::ok() && simulationRunning) {
 		begin();
+		//stop();
+		//wander();
 		ros::spinOnce();
 		r.sleep();
 	}
-	
-	return(0);
+	writeToLog("Simulation Terminated");
+	simulationLog.close();
+	ros::shutdown();
+	printf("Agent just ended!!!!\n");
+	return (0);
 }
